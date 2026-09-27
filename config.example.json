@@ -1,0 +1,21 @@
+{
+  "clipboard_auto_lookup": true,
+  "always_on_top": true,
+  "target_language": "tr",
+  "theme": "dark",
+  "auto_hide_seconds": 12,
+  "gemini_api_key": "",
+  "use_gemini_direct": false,
+  "gemini_model": "gemini-1.5-flash",
+  "font_size": 11,
+  "history_limit": 100,
+  "window_pos_x": 100,
+  "window_pos_y": 100,
+  "hotkey_ocr": "tab+space",
+  "hotkey_overlay": "alt+h",
+  "hotkey_clipboard": "alt+c",
+  "hotkey_hover": "alt+v",
+  "hover_enabled": true,
+  "hover_delay_ms": 300,
+  "hover_trigger_mode": "mouse_side"
+}
