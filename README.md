@@ -9,7 +9,27 @@
 
 Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilmediğiniz bir kelime ya da ifade çıktığında videoyu durdurup tarayıcıda sözlük arama derdine son!
 
-**Ekran Sözlüğü**, Windows masaüstünüzün üzerinde sessizce çalışan modern, yarı saydam ve hafif bir asistandır. Farenizi altyazının üzerine getirip yan tuşa basarak veya tek bir kısayolla ekrandaki kelimeleri mikrosaniyeler içinde algılar, **renkli artikelleri (`der`, `die`, `das`)**, **çoğul biçimleri** ve **Türkçe anlamlarıyla** ekrana getirir.
+**Ekran Sözlüğü**, Windows masaüstünüzün üzerinde sessizce çalışan modern, yarı saydam ve hafif bir asistandır. Farenizi altyazının üzerine getirip yan tuşa basarak veya tek bir kısayolla ekrandaki kelimeleri çok kısa sürede algılar, **renkli artikelleri (`der`, `die`, `das`)**, **çoğul biçimleri** ve **Türkçe anlamlarıyla** ekrana getirir.
+
+---
+
+## 📸 Kullanım Önizlemesi
+
+```text
+┌───────────────────────────────────────────────────────────────────────────┐
+│ [Video / YouTube / Netflix Altyazısı]                                     │
+│                                                                           │
+│               "Wir müssen heute diese Entscheidung treffen."              │
+│                                           ▲                               │
+│                                           │ (Fare Yan Tuşu: Mouse 4/5)    │
+│                                                                           │
+│       ┌───────────────────────────────────────────────────────────┐       │
+│       │  🔴 DIE Entscheidung  (Pl: die Entscheidungen)         ⭐ │       │
+│       │  karar (seçim, hüküm)                                     │       │
+│       │  💡 İpucu: -ung eki alan isimler 'die' artikeli alır.     │       │
+│       └───────────────────────────────────────────────────────────┘       │
+└───────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -34,7 +54,7 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 
 ### 4. 🤖 Google Gemini AI Entegrasyonu (Düşük Tüketimli Flash Modelleri)
 - Ayarlar menüsünden Google Gemini API anahtarınızı bağlayabilirsiniz.
-- **Ekonomik ve Ücretsiz:** Google AI Studio ücretsiz planında (günde 1.500 istek) sıfır maliyetle çalışan **`gemini-1.5-flash`**, **`gemini-2.0-flash`** veya **`gemini-1.5-flash-8b`** modelleriyle tüm metinleri ve cümleleri derin dilbilgisi analizleriyle Türkçeye çevirir.
+- **Hafif ve Ekonomik:** Google AI Studio'nun yüksek performanslı ve düşük token tüketen Flash modelleriyle (`gemini-1.5-flash`, `gemini-2.0-flash` vb.) tüm metinleri ve cümleleri derin dilbilgisi analizleriyle Türkçeye çevirir.
 - **Canlı Test Butonu:** API anahtarınızın çalışıp çalışmadığını ayarlar menüsündeki `🔍 Test Et` butonuyla anında doğrulayabilirsiniz.
 
 ### 5. 📋 Otomatik Pano Takibi (`Ctrl + C`)
@@ -47,7 +67,7 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 
 ### 7. ⚡ Çevrimdışı SQLite Önbellek (Offline Cache)
 - Daha önce bakılan veya sık kullanılan 1.000+ temel Almanca kelime çevrimdışı yerel veritabanında saklanır.
-- İnternet bağlantınız olmasa dahi **0 milisaniye** gecikmeyle anında yanıt verir ve gereksiz API kotası tüketmez.
+- İnternet bağlantınız olmasa dahi anında yanıt verir ve gereksiz kota tüketmez.
 
 ---
 
@@ -77,8 +97,8 @@ Uygulama arka plandayken veya tam ekran bir video/oyun açıkken dahi kısayolla
 
 ### 1. Repoyu Klonlayın
 ```bash
-git clone https://github.com/KULLANICI_ADINIZ/ekran-sozlugu.git
-cd ekran-sozlugu
+git clone https://github.com/SandL0J/On-screen-dictionary.git
+cd On-screen-dictionary
 ```
 
 ### 2. Gerekli Paketleri Yükleyin
@@ -100,7 +120,7 @@ python main.py
 ## 📁 Proje Mimarisi
 
 ```
-ekran-sozlugu/
+On-screen-dictionary/
 ├── app/
 │   ├── config.py              # Uygulama ayarları yönetimi
 │   ├── database.py            # SQLite veritabanı (önbellek, defter, geçmiş)
