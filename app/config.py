@@ -25,6 +25,9 @@ DEFAULT_CONFIG = {
     "hover_trigger_mode": "mouse_side",
     "use_gemini_direct": False,
     "gemini_model": "gemini-1.5-flash",
+    "first_run_completed": False,
+    "tesseract_cmd": "",
+    "ocr_engine_preference": "auto",
 }
 
 CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"

@@ -216,7 +216,7 @@ class WordbookWindow:
         if self.flashcard_words:
             random.shuffle(self.flashcard_words)
             self.current_card_index = 0
-            self._show_current_flashcard()
+        self._show_current_flashcard()
 
     def _show_current_flashcard(self):
         if not self.flashcard_words:

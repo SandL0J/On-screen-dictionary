@@ -201,6 +201,39 @@ class ResultHUD:
         for widget in self.content_frame.winfo_children():
             widget.destroy()
 
+        # Hata durumu kontrolü (ör. çevrimdışı veya geçersiz metin)
+        if "error" in self.data:
+            err_msg = str(self.data.get("error", "Bilinmeyen çeviri hatası"))
+            self.app_title.configure(text="EKRAN SÖZLÜĞÜ • BİLGİ")
+
+            err_frame = tk.Frame(self.content_frame, bg=self.card_bg, padx=6, pady=4)
+            err_frame.pack(fill="both", expand=True)
+
+            tk.Label(
+                err_frame,
+                text="⚠️ Çeviri Uyarısı",
+                font=("Segoe UI", 11, "bold"),
+                fg="#f59e0b",
+                bg=self.card_bg
+            ).pack(anchor="w", pady=(0, 4))
+
+            tk.Label(
+                err_frame,
+                text=err_msg,
+                font=("Segoe UI", 9),
+                fg="#d4d4d8",
+                bg=self.card_bg,
+                wraplength=340,
+                justify="left"
+            ).pack(anchor="w")
+
+            if hasattr(self, "btn_save"):
+                self.btn_save.pack_forget()
+            return
+
+        if hasattr(self, "btn_save") and hasattr(self, "footer_frame"):
+            self.btn_save.pack(side="left")
+
         is_sentence = self.data.get("is_sentence", False)
         direction = self.data.get("direction", "de_to_tr")
 
@@ -352,9 +385,13 @@ class ResultHUD:
                 notes_box = tk.Frame(self.content_frame, bg="#1f1f23", padx=6, pady=4)
                 notes_box.pack(fill="x", pady=(2, 2))
                 for n in notes:
+                    note_title = n.get("title", "Dilbilgisi Notu")
+                    note_text = n.get("text") or n.get("desc") or ""
+                    if not note_text:
+                        continue
                     n_badge = tk.Label(
                         notes_box,
-                        text=f"📌 {n['title']}",
+                        text=f"📌 {note_title}",
                         font=("Segoe UI", 8, "bold"),
                         fg="#facc15",
                         bg="#1f1f23"
@@ -362,7 +399,7 @@ class ResultHUD:
                     n_badge.pack(anchor="w")
                     n_txt = tk.Label(
                         notes_box,
-                        text=n['text'],
+                        text=note_text,
                         font=("Segoe UI", 8),
                         fg="#d4d4d8",
                         bg="#1f1f23",
@@ -389,13 +426,14 @@ class ResultHUD:
     def _toggle_save_word(self):
         german = self.data.get("german", "").strip()
         turkish = self.data.get("turkish", "").strip()
+        if not german or not self.db:
+            return
+
         article = self.data.get("article", "").strip()
         plural = self.data.get("plural", "").strip()
         pos = self.data.get("pos", "").strip()
         ex_de = self.data.get("example_de", "").strip()
         ex_tr = self.data.get("example_tr", "").strip()
-        if not self.db:
-            return
 
         if self.db.is_word_saved(german):
             # Kayıtlıysa sil (Toggle)
@@ -504,6 +542,9 @@ class ResultHUD:
                 self.window.after_cancel(self.auto_hide_id)
             except Exception:
                 pass
+            self.auto_hide_id = None
+        if ResultHUD._instance is self:
+            ResultHUD._instance = None
         try:
             self.window.destroy()
         except Exception:

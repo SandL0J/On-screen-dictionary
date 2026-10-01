@@ -116,11 +116,13 @@ class TranslationEngine:
 
     def _translate_sentence(self, text: str) -> Dict[str, Any]:
         """Cümleyi Google Translate üzerinden Türkçeye çevirir ve dilbilgisi kurallarını ekler."""
+        is_offline = False
         try:
             gt_data = self._translate_via_gt(text, sl="auto", tl="tr")
             turkish_meaning = gt_data["translated_text"]
         except Exception as e:
-            return {"error": f"Çeviri hatası: {e}"}
+            turkish_meaning = "Çeviri alınamadı (İnternet bağlantısı yok veya servis meşgul)"
+            is_offline = True
 
         grammar_notes = analyze_sentence_grammar(text)
         return {
@@ -131,7 +133,8 @@ class TranslationEngine:
             "original": text,
             "translation": turkish_meaning,
             "is_sentence": True,
-            "grammar_notes": grammar_notes
+            "grammar_notes": grammar_notes,
+            "offline_mode": is_offline
         }
 
     def _translate_via_gt(self, text: str, sl: str = "auto", tl: str = "tr") -> Dict[str, Any]:

@@ -3,8 +3,8 @@ Ayarlar Penceresi Modülü (Settings Dialog)
 Kullanıcının pano dinleme, kart süresi, kısayol tuşları ve API ayarlarını düzenlemesini sağlar.
 """
 import tkinter as tk
-from tkinter import ttk, messagebox
-from typing import Callable
+from tkinter import ttk, messagebox, filedialog
+from typing import Callable, Optional
 import threading
 from app.config import save_config
 from app.hotkey_manager import validate_hotkey_string, format_hotkey
@@ -12,14 +12,23 @@ from app.startup_manager import is_startup_enabled, enable_startup, disable_star
 
 
 class SettingsWindow:
-    def __init__(self, parent: tk.Tk, config: dict, on_settings_changed: Callable[[dict], None]):
+    def __init__(
+        self,
+        parent: tk.Tk,
+        config: dict,
+        on_settings_changed: Callable[[dict], None],
+        ocr_engine=None,
+        on_open_wizard: Optional[Callable[[], None]] = None
+    ):
         self.config = config
         self.on_settings_changed = on_settings_changed
+        self.ocr_engine = ocr_engine
+        self.on_open_wizard = on_open_wizard
 
         self.window = tk.Toplevel(parent)
         self.window.title("Ayarlar • Ekran Sözlüğü")
-        self.window.geometry("550x810")
-        self.window.resizable(False, False)
+        self.window.geometry("560x860")
+        self.window.resizable(True, True)
         self.window.configure(bg="#18181b")
 
         self._init_ui()
@@ -250,6 +259,95 @@ class SettingsWindow:
         self.entry_hotkey_clip.insert(0, self.config.get("hotkey_clipboard", "alt+c"))
         tk.Label(f_clip, text="(Örn: alt+c)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
 
+        # 5e. OCR Motor Ayarları ve Canlı Test
+        ocr_section = tk.LabelFrame(
+            main_frame,
+            text=" 🔍 Metin Tanıma (OCR) Motoru & Tesseract ",
+            font=("Segoe UI", 9, "bold"),
+            fg="#38bdf8",
+            bg="#18181b",
+            padx=10,
+            pady=6,
+            relief="groove"
+        )
+        ocr_section.pack(fill="x", pady=(4, 6))
+
+        f_ocr_pref = tk.Frame(ocr_section, bg="#18181b")
+        f_ocr_pref.pack(fill="x", pady=2)
+        tk.Label(f_ocr_pref, text="OCR Tercihi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=14, anchor="w").pack(side="left")
+
+        self.var_ocr_pref = tk.StringVar(value=self.config.get("ocr_engine_preference", "auto"))
+        ocr_opts = [
+            ("Otomatik (Önerilen)", "auto"),
+            ("Windows Media OCR", "windows_media"),
+            ("Tesseract OCR", "tesseract"),
+        ]
+        for opt_lbl, opt_val in ocr_opts:
+            rb = tk.Radiobutton(
+                f_ocr_pref,
+                text=opt_lbl,
+                variable=self.var_ocr_pref,
+                value=opt_val,
+                font=("Segoe UI", 8),
+                fg="#fafafa",
+                bg="#18181b",
+                selectcolor="#27272a",
+                activebackground="#18181b",
+                activeforeground="#fafafa"
+            )
+            rb.pack(side="left", padx=2)
+
+        f_tess_path = tk.Frame(ocr_section, bg="#18181b")
+        f_tess_path.pack(fill="x", pady=2)
+        tk.Label(f_tess_path, text="Tesseract Yolu:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=14, anchor="w").pack(side="left")
+        self.entry_tess_cmd = tk.Entry(f_tess_path, font=("Segoe UI", 8), bg="#27272a", fg="#fafafa", insertbackground="white")
+        self.entry_tess_cmd.pack(side="left", fill="x", expand=True, padx=4)
+        self.entry_tess_cmd.insert(0, self.config.get("tesseract_cmd", ""))
+
+        btn_browse_tess = tk.Button(
+            f_tess_path,
+            text="Gözat...",
+            font=("Segoe UI", 8),
+            bg="#3f3f46",
+            fg="#fafafa",
+            relief="flat",
+            padx=6,
+            cursor="hand2",
+            command=self._browse_tesseract
+        )
+        btn_browse_tess.pack(side="left", padx=(2, 4))
+
+        f_ocr_actions = tk.Frame(ocr_section, bg="#18181b")
+        f_ocr_actions.pack(fill="x", pady=(3, 2))
+
+        self.btn_test_ocr = tk.Button(
+            f_ocr_actions,
+            text="🧪 OCR Testi Yap",
+            font=("Segoe UI", 8, "bold"),
+            bg="#0284c7",
+            fg="#ffffff",
+            activebackground="#0369a1",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=8,
+            pady=1,
+            cursor="hand2",
+            command=self._test_ocr_action
+        )
+        self.btn_test_ocr.pack(side="left")
+
+        self.lbl_ocr_status = tk.Label(
+            f_ocr_actions,
+            text="OCR durumunu test etmek için butona tıklayın.",
+            font=("Segoe UI", 8, "italic"),
+            fg="#71717a",
+            bg="#18181b",
+            wraplength=380,
+            justify="left",
+            anchor="w"
+        )
+        self.lbl_ocr_status.pack(side="left", padx=8)
+
         # 6. Gemini API Anahtarı ve Bağlantı Kontrolü
         api_section = tk.LabelFrame(
             main_frame,
@@ -399,6 +497,23 @@ class SettingsWindow:
             justify="left"
         ).pack(fill="x", pady=(3, 2))
 
+        # Sihirbaz Butonu
+        btn_wizard = tk.Button(
+            main_frame,
+            text="🚀 Başlangıç Rehberini & Kısayol Sihirbazını Aç",
+            font=("Segoe UI", 9, "bold"),
+            bg="#27272a",
+            fg="#38bdf8",
+            activebackground="#3f3f46",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self._launch_wizard
+        )
+        btn_wizard.pack(side="bottom", fill="x", pady=(6, 4))
+
         # Kaydet Butonu
         btn_save = tk.Button(
             main_frame,
@@ -512,6 +627,12 @@ class SettingsWindow:
         self.config["hotkey_overlay"] = hotkey_overlay
         self.config["hotkey_clipboard"] = hotkey_clip
 
+        # OCR Motor Tercihleri
+        if hasattr(self, "entry_tess_cmd"):
+            self.config["tesseract_cmd"] = self.entry_tess_cmd.get().strip()
+        if hasattr(self, "var_ocr_pref"):
+            self.config["ocr_engine_preference"] = self.var_ocr_pref.get()
+
         # Otomatik başlatma kayıt defteri güncelleme
         want_startup = self.var_startup.get()
         if want_startup:
@@ -523,4 +644,54 @@ class SettingsWindow:
         self.on_settings_changed(self.config)
         messagebox.showinfo("Başarılı", "Ayarlar başarıyla kaydedildi.", parent=self.window)
         self.window.destroy()
+
+    def _browse_tesseract(self):
+        filename = filedialog.askopenfilename(
+            parent=self.window,
+            title="Tesseract Yürütülebilir Dosyasını Seçin (tesseract.exe)",
+            filetypes=[("Yürütülebilir Dosyalar", "*.exe"), ("Tüm Dosyalar", "*.*")]
+        )
+        if filename:
+            self.entry_tess_cmd.delete(0, tk.END)
+            self.entry_tess_cmd.insert(0, filename)
+
+    def _test_ocr_action(self):
+        from app.ocr_engine import OCREngine
+        tess_path = self.entry_tess_cmd.get().strip() if hasattr(self, "entry_tess_cmd") else ""
+        pref = self.var_ocr_pref.get() if hasattr(self, "var_ocr_pref") else "auto"
+        engine = self.ocr_engine or OCREngine(tesseract_cmd=tess_path, preference=pref)
+        self.btn_test_ocr.configure(state="disabled")
+        self.lbl_ocr_status.configure(text="⏳ OCR test ediliyor...", fg="#facc15")
+
+        def _worker():
+            success, msg = engine.test_ocr("Guten Tag")
+            def _update():
+                try:
+                    if self.window.winfo_exists():
+                        self.btn_test_ocr.configure(state="normal")
+                        color = "#10b981" if success else "#ef4444"
+                        self.lbl_ocr_status.configure(text=msg, fg=color)
+                except Exception:
+                    pass
+            try:
+                if self.window.winfo_exists():
+                    self.window.after(0, _update)
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _launch_wizard(self):
+        if self.on_open_wizard:
+            self.window.destroy()
+            self.on_open_wizard()
+        else:
+            from app.gui.onboarding_wizard import OnboardingWizard
+            from app.ocr_engine import OCREngine
+            from app.translator import TranslationEngine
+            eng = self.ocr_engine or OCREngine()
+            trans = TranslationEngine(gemini_api_key=self.config.get("gemini_api_key", ""))
+            OnboardingWizard(self.window.master, self.config, eng, trans)
+            self.window.destroy()
+
 

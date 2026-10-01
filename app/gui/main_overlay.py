@@ -13,6 +13,7 @@ from app.gui.snipper import ScreenSnipper
 from app.gui.wordbook_window import WordbookWindow
 from app.gui.settings_window import SettingsWindow
 from app.gui.hover_tooltip import HoverTooltip
+from app.gui.onboarding_wizard import OnboardingWizard
 from app.hover_tracker import HoverTracker
 from app.hotkey_manager import HotkeyManager, format_hotkey
 from app.clipboard_watcher import get_clipboard_text
@@ -64,15 +65,44 @@ class MainOverlay:
         # Snipper başlatıcı
         self.snipper = ScreenSnipper(self.root, self.ocr, self.lookup_text)
 
-        # Canlı Hover Tooltip ve Takipçisi
+        # Canlı Hover Tooltip ve Takipçisi (İş parçacığı güvenli sarmalayıcılar ile)
         self.hover_tooltip = HoverTooltip(self.root, db=self.db)
+
+        def _safe_hover_show(word_data, x, y):
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, lambda: self.hover_tooltip.show(word_data, x, y))
+            except Exception:
+                pass
+
+        def _safe_hover_hide():
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, lambda: self.hover_tooltip.hide())
+            except Exception:
+                pass
+
+        def _safe_hover_loading(x, y):
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, lambda: self.hover_tooltip.show_loading(x, y))
+            except Exception:
+                pass
+
+        def _safe_hover_not_found(x, y):
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, lambda: self.hover_tooltip.show_message(x, y, "⚠️ Kelime bulunamadı", auto_hide_ms=1300))
+            except Exception:
+                pass
+
         self.hover_tracker = HoverTracker(
             ocr_engine=self.ocr,
             translator=self.translator,
-            on_word_hover=lambda word_data, x, y: self.hover_tooltip.show(word_data, x, y),
-            on_hover_leave=lambda: self.hover_tooltip.hide(),
-            on_loading=lambda x, y: self.hover_tooltip.show_loading(x, y),
-            on_not_found=lambda x, y: self.hover_tooltip.show_message(x, y, "⚠️ Kelime bulunamadı", auto_hide_ms=1300),
+            on_word_hover=_safe_hover_show,
+            on_hover_leave=_safe_hover_hide,
+            on_loading=_safe_hover_loading,
+            on_not_found=_safe_hover_not_found,
             hover_delay_ms=self.config.get("hover_delay_ms", 300),
             trigger_mode=self.config.get("hover_trigger_mode", "mouse_side"),
             enabled=self.config.get("hover_enabled", True),
@@ -83,6 +113,13 @@ class MainOverlay:
         self._set_initial_position()
         self._bind_drag_events()
         self._setup_hotkeys()
+
+        # İlk çalıştırma sihirbazı
+        if not self.config.get("first_run_completed", False):
+            try:
+                self.root.after(450, self._open_onboarding_wizard)
+            except Exception:
+                pass
 
     def _setup_hotkeys(self):
         """Global Windows kısayol tuşlarını bağlar."""
@@ -97,10 +134,26 @@ class MainOverlay:
         hotkey_overlay = self.config.get("hotkey_overlay", "alt+h")
         hotkey_clipboard = self.config.get("hotkey_clipboard", "alt+c")
 
-        self.hotkey_mgr.register("ocr", hotkey_ocr, lambda: self.root.after(0, self._trigger_ocr_hotkey))
-        self.hotkey_mgr.register("hover", hotkey_hover, lambda: self.root.after(0, self._toggle_hover))
-        self.hotkey_mgr.register("overlay", hotkey_overlay, lambda: self.root.after(0, self._toggle_bar_visibility))
-        self.hotkey_mgr.register("clipboard", hotkey_clipboard, lambda: self.root.after(0, self._lookup_from_clipboard))
+        # Güvenli kısayol kaydı: yapılandırmadaki tuş geçersizse varsayılana dön
+        try:
+            self.hotkey_mgr.register("ocr", hotkey_ocr, lambda: self.root.after(0, self._trigger_ocr_hotkey))
+        except Exception:
+            self.hotkey_mgr.register("ocr", "tab+space", lambda: self.root.after(0, self._trigger_ocr_hotkey))
+
+        try:
+            self.hotkey_mgr.register("hover", hotkey_hover, lambda: self.root.after(0, self._toggle_hover))
+        except Exception:
+            self.hotkey_mgr.register("hover", "alt+v", lambda: self.root.after(0, self._toggle_hover))
+
+        try:
+            self.hotkey_mgr.register("overlay", hotkey_overlay, lambda: self.root.after(0, self._toggle_bar_visibility))
+        except Exception:
+            self.hotkey_mgr.register("overlay", "alt+h", lambda: self.root.after(0, self._toggle_bar_visibility))
+
+        try:
+            self.hotkey_mgr.register("clipboard", hotkey_clipboard, lambda: self.root.after(0, self._lookup_from_clipboard))
+        except Exception:
+            self.hotkey_mgr.register("clipboard", "alt+c", lambda: self.root.after(0, self._lookup_from_clipboard))
 
     def _trigger_ocr_hotkey(self):
         """Kısayol basıldığında pencereyi görünür yapıp öne getirir ve OCR kırpıcıyı açar."""
@@ -241,6 +294,23 @@ class MainOverlay:
         )
         self.btn_settings.pack(side="left", padx=(0, 4))
 
+        # 6b. Başlangıç Rehberi Butonu (?)
+        self.btn_guide = tk.Button(
+            self.bar_frame,
+            text="?",
+            font=("Segoe UI", 8, "bold"),
+            bg="#27272a",
+            fg="#38bdf8",
+            activebackground="#3f3f46",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=6,
+            pady=2,
+            cursor="hand2",
+            command=self._open_onboarding_wizard
+        )
+        self.btn_guide.pack(side="left", padx=(0, 4))
+
         # 7. Gizle / Küçült Butonu (Alt+H)
         self.btn_hide = tk.Label(
             self.bar_frame,
@@ -374,7 +444,28 @@ class MainOverlay:
         WordbookWindow(self.root, self.db)
 
     def _open_settings(self):
-        SettingsWindow(self.root, self.config, self._apply_settings)
+        SettingsWindow(
+            self.root,
+            self.config,
+            self._apply_settings,
+            ocr_engine=self.ocr,
+            on_open_wizard=self._open_onboarding_wizard
+        )
+
+    def _open_onboarding_wizard(self):
+        """İlk çalıştırma veya başlangıç rehberi sihirbazını açar."""
+        OnboardingWizard(
+            parent=self.root,
+            config=self.config,
+            ocr_engine=self.ocr,
+            translator=self.translator,
+            db=self.db,
+            on_complete=self._on_wizard_complete
+        )
+
+    def _on_wizard_complete(self):
+        """Sihirbaz tamamlandığında ayarları güncelle."""
+        self._apply_settings(self.config)
 
     def _apply_settings(self, new_config: dict):
         self.config = new_config
@@ -401,6 +492,12 @@ class MainOverlay:
         hotkey_ocr_label = format_hotkey(self.config.get("hotkey_ocr", "tab+space"))
         self.btn_snip.configure(text=f"✂ Kırp ({hotkey_ocr_label})")
         self._register_configured_hotkeys()
+
+        # OCR Motor Tercihlerini Güncelle
+        if hasattr(self.ocr, "set_tesseract_cmd") and "tesseract_cmd" in new_config:
+            self.ocr.set_tesseract_cmd(new_config["tesseract_cmd"])
+        if hasattr(self.ocr, "set_preference") and "ocr_engine_preference" in new_config:
+            self.ocr.set_preference(new_config["ocr_engine_preference"])
 
         if "gemini_api_key" in new_config:
             self.translator.set_gemini_key(new_config["gemini_api_key"])

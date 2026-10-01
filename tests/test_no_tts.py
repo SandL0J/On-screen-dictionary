@@ -172,8 +172,11 @@ class TestTTSFeatureRemoval(unittest.TestCase):
         finally:
             wb.window.destroy()
 
+    @patch("app.gui.settings_window.disable_startup")
+    @patch("app.gui.settings_window.enable_startup")
+    @patch("app.gui.settings_window.save_config")
     @patch("tkinter.messagebox.showinfo")
-    def test_settings_window_no_sound_option(self, mock_showinfo):
+    def test_settings_window_no_sound_option(self, mock_showinfo, mock_save_config, mock_enable_startup, mock_disable_startup):
         """Ayarlar penceresinde ses seçeneği bulunmamalı ve kaydederken sound_enabled temizlenmelidir."""
         if not self.tk_available:
             self.skipTest("Tkinter arayüzü mevcut değil")

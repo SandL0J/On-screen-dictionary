@@ -141,11 +141,20 @@ class Database:
     # --- KELİME DEFTERİ METOTLARI ---
     def add_word(self, german: str, turkish: str, article: str = "", plural: str = "",
                  part_of_speech: str = "", example_de: str = "", example_tr: str = "",
-                 notes: str = "", status: str = "learning") -> int:
+                 notes: str = "", status: str = "learning", tags: str = "", **kwargs) -> int:
+        clean_german = (german or "").strip()
+        if not clean_german:
+            return -1
+
+        clean_notes = (notes or "").strip()
+        if tags:
+            tag_label = f"[{tags.strip()}]"
+            clean_notes = f"{clean_notes} {tag_label}".strip() if clean_notes else tag_label
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             # Aynı kelime var mı kontrol et
-            cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
+            cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (clean_german,))
             existing = cursor.fetchone()
             if existing:
                 # Güncelle
@@ -154,7 +163,7 @@ class Database:
                         article = ?, plural = ?, turkish = ?, part_of_speech = ?,
                         example_de = ?, example_tr = ?, notes = ?, status = ?
                     WHERE id = ?
-                """, (article, plural, turkish, part_of_speech, example_de, example_tr, notes, status, existing["id"]))
+                """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, status, existing["id"]))
                 conn.commit()
                 return existing["id"]
             else:
@@ -164,9 +173,33 @@ class Database:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (german.strip(), article.strip(), plural.strip(), turkish.strip(),
                       part_of_speech.strip(), example_de.strip(), example_tr.strip(),
-                      notes.strip(), status))
+                      clean_notes, status))
                 conn.commit()
                 return cursor.lastrowid
+
+    def seed_starter_words(self) -> int:
+        """Yeni başlayan kullanıcılar için temel kelimeleri deftere ekler (defter boşsa)."""
+        starters = [
+            ("Haus", "ev, konut", "das", "die Häuser", "İsim (Nomen)", "Ich gehe nach Hause.", "Eve gidiyorum.", "Başlangıç paketi"),
+            ("Buch", "kitap", "das", "die Bücher", "İsim (Nomen)", "Ich lese ein spannendes Buch.", "Heyecan verici bir kitap okuyorum.", "Başlangıç paketi"),
+            ("Zeit", "zaman, vakit", "die", "die Zeiten", "İsim (Nomen)", "Ich habe heute leider keine Zeit.", "Bugün vaktim yok.", "Başlangıç paketi"),
+            ("Tisch", "masa", "der", "die Tische", "İsim (Nomen)", "Das Buch liegt auf dem Tisch.", "Kitap masanın üzerinde duruyor.", "Başlangıç paketi"),
+            ("Freund", "arkadaş, dost", "der", "die Freunde", "İsim (Nomen)", "Er ist mein bester Freund.", "O benim en iyi arkadaşım.", "Başlangıç paketi")
+        ]
+        count = 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as cnt FROM wordbook")
+            if cursor.fetchone()["cnt"] == 0:
+                for de, tr, art, pl, pos, ex_de, ex_tr, note in starters:
+                    cursor.execute("""
+                        INSERT INTO wordbook (german, article, plural, turkish, part_of_speech,
+                                              example_de, example_tr, notes, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'learning')
+                    """, (de, art, pl, tr, pos, ex_de, ex_tr, note))
+                    count += 1
+                conn.commit()
+        return count
 
     def is_word_saved(self, german: str) -> bool:
         with self._get_connection() as conn:

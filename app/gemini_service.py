@@ -189,7 +189,8 @@ class GeminiService:
         if rule_note:
             grammar_notes.append({
                 "title": "Gemini AI Notu",
-                "desc": rule_note
+                "desc": rule_note,
+                "text": rule_note
             })
 
         dict_entries = []

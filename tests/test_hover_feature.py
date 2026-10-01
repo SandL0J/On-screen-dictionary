@@ -207,7 +207,8 @@ class TestHoverFeature(unittest.TestCase):
         self.root.update()
         self.assertIsNone(tooltip._current_data)
 
-    def test_main_overlay_hover_integration(self):
+    @patch("app.config.save_config")
+    def test_main_overlay_hover_integration(self, mock_save_config):
         """MainOverlay üzerinde hover_tracker, hover_tooltip ve btn_hover entegre olmalıdır."""
         from app.gui.main_overlay import MainOverlay
 

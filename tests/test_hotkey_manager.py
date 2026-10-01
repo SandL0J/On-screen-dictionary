@@ -336,8 +336,11 @@ class TestConfigAndSettingsIntegration(unittest.TestCase):
         finally:
             temp_dir.cleanup()
 
+    @patch("app.gui.settings_window.disable_startup")
+    @patch("app.gui.settings_window.enable_startup")
+    @patch("app.gui.settings_window.save_config")
     @patch("tkinter.messagebox.showinfo")
-    def test_settings_window_hotkey_editing(self, mock_showinfo):
+    def test_settings_window_hotkey_editing(self, mock_showinfo, mock_save_config, mock_enable_startup, mock_disable_startup):
         """Ayarlar penceresinde kısayollar düzenlenebilmeli ve kaydedilebilmelidir."""
         if not self.tk_available:
             self.skipTest("Tkinter mevcut değil")

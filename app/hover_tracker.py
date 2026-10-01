@@ -108,21 +108,36 @@ def capture_screen_rect_gdi(x: int, y: int, w: int, h: int) -> Optional[Image.Im
     """
     Win32 GDI BitBlt (CAPTUREBLT | SRCCOPY) kullanarak ekrandan donanımsal ve doğrudan görüntü yakalar.
     Katmanlı pencereleri, donanım hızlandırmalı video altyazılarını ve şeffaf katmanları kaçırmaz.
-    PIL ImageGrab'in yaşadığı 'screen grab failed' hatasını tamamen aşar.
+    GDI tanıtıcılarını (handles) daima finally bloğunda serbest bırakarak kaynak sızıntılarını önler.
+    Çoklu monitörlerdeki negatif sanal ekran koordinatlarını destekler.
     """
     if not IS_WINDOWS or not user32 or not gdi32:
         return None
 
     w = max(int(w), 10)
     h = max(int(h), 10)
-    x = max(int(x), 0)
-    y = max(int(y), 0)
+    x = int(x)
+    y = int(y)
+
+    hwin = None
+    hwindc = None
+    srcdc = None
+    bmp = None
+    old_bmp = None
 
     try:
         hwin = user32.GetDesktopWindow()
+        if not hwin:
+            return None
         hwindc = user32.GetWindowDC(hwin)
+        if not hwindc:
+            return None
         srcdc = gdi32.CreateCompatibleDC(hwindc)
+        if not srcdc:
+            return None
         bmp = gdi32.CreateCompatibleBitmap(hwindc, w, h)
+        if not bmp:
+            return None
         old_bmp = gdi32.SelectObject(srcdc, bmp)
 
         # Ekran görüntüsünü kopyala (SRCCOPY | CAPTUREBLT)
@@ -139,16 +154,31 @@ def capture_screen_rect_gdi(x: int, y: int, w: int, h: int) -> Optional[Image.Im
         buffer = ctypes.create_string_buffer(w * h * 4)
         gdi32.GetDIBits(hwindc, bmp, 0, h, buffer, ctypes.byref(bmi), 0)
 
-        # Temizlik
-        gdi32.SelectObject(srcdc, old_bmp)
-        gdi32.DeleteObject(bmp)
-        gdi32.DeleteDC(srcdc)
-        user32.ReleaseDC(hwin, hwindc)
-
         return Image.frombuffer("RGBA", (w, h), buffer, "raw", "BGRA", 0, 1).convert("RGB")
     except Exception as e:
         print(f"GDI Ekran yakalama hatası: {e}")
         return None
+    finally:
+        if srcdc and old_bmp:
+            try:
+                gdi32.SelectObject(srcdc, old_bmp)
+            except Exception:
+                pass
+        if bmp:
+            try:
+                gdi32.DeleteObject(bmp)
+            except Exception:
+                pass
+        if srcdc:
+            try:
+                gdi32.DeleteDC(srcdc)
+            except Exception:
+                pass
+        if hwin and hwindc:
+            try:
+                user32.ReleaseDC(hwin, hwindc)
+            except Exception:
+                pass
 
 
 class HoverTracker:
@@ -452,8 +482,8 @@ class HoverTracker:
         half_w = self.crop_width // 2
         half_h = self.crop_height // 2
 
-        left = max(0, cursor_x - half_w)
-        top = max(0, cursor_y - half_h)
+        left = cursor_x - half_w
+        top = cursor_y - half_h
 
         try:
             # 1. Donanımsal Win32 GDI ile mikro ekran görüntüsü al

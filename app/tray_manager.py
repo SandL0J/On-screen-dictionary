@@ -48,12 +48,14 @@ class TrayManager:
         on_open_settings: Callable[[], None],
         on_quit: Callable[[], None],
         root: Optional[tk.Tk] = None,
+        on_open_wizard: Optional[Callable[[], None]] = None,
     ):
         self.on_show = on_show
         self.on_hide = on_hide
         self.on_open_settings = on_open_settings
         self.on_quit = on_quit
         self.root = root
+        self.on_open_wizard = on_open_wizard
         self._icon: Optional["pystray.Icon"] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -100,6 +102,10 @@ class TrayManager:
             pystray.MenuItem(
                 "⚙️ Ayarlar",
                 lambda icon, item: self._tk_call(self.on_open_settings),
+            ),
+            pystray.MenuItem(
+                "🚀 Başlangıç Rehberi",
+                lambda icon, item: self._tk_call(self.on_open_wizard) if self.on_open_wizard else self._tk_call(self.on_open_settings),
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(

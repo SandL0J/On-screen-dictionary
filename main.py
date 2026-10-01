@@ -32,6 +32,31 @@ except Exception:
     except Exception:
         pass
 
+def setup_exception_logging():
+    log_file = BASE_DIR / "ekran_sozlugu_error.log"
+    def excepthook(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        import traceback
+        import datetime
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        err_str = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+        try:
+            enc = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+            msg = str(exc_value).encode(enc, errors="replace").decode(enc)
+            print(f"[Ekran Sözlüğü Hatası]: {msg}")
+        except Exception:
+            pass
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n[{now_str}] UNCAUGHT EXCEPTION:\n{err_str}\n" + "-"*50 + "\n")
+        except Exception:
+            pass
+    sys.excepthook = excepthook
+
+setup_exception_logging()
+
 from app.config import load_config, save_config
 from app.database import Database
 from app.tts_engine import GermanTTSEngine
@@ -58,7 +83,10 @@ def main():
 
     # 2. Motorlar
     tts_engine = GermanTTSEngine()
-    ocr_engine = OCREngine()
+    ocr_engine = OCREngine(
+        tesseract_cmd=config.get("tesseract_cmd", ""),
+        preference=config.get("ocr_engine_preference", "auto")
+    )
     translator = TranslationEngine(
         db=db,
         gemini_api_key=config.get("gemini_api_key", ""),
@@ -110,12 +138,17 @@ def main():
         show_bar()
         overlay._open_settings()
 
+    def open_wizard_from_tray():
+        show_bar()
+        overlay._open_onboarding_wizard()
+
     tray = TrayManager(
         on_show=show_bar,
         on_hide=hide_bar,
         on_open_settings=open_settings_from_tray,
         on_quit=on_quit,
         root=root,
+        on_open_wizard=open_wizard_from_tray,
     )
     tray.start()
 
