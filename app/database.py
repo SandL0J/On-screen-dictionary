@@ -5,9 +5,9 @@ Kelime Defteri (Wordbook), Geçmiş (History) ve Çevrimdışı Önbellek (Cache
 import sqlite3
 import json
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta, date
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 DB_PATH = Path(__file__).resolve().parent.parent / "ekran_sozlugu.db"
 
@@ -45,9 +45,28 @@ class Database:
                     example_tr TEXT DEFAULT '',
                     notes TEXT DEFAULT '',
                     status TEXT DEFAULT 'learning',
+                    ease_factor REAL DEFAULT 2.5,
+                    interval_days INTEGER DEFAULT 0,
+                    repetitions INTEGER DEFAULT 0,
+                    last_reviewed_at TIMESTAMP DEFAULT NULL,
+                    next_review_date TEXT DEFAULT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Sütun göçü (Migration) - Mevcut veritabanlarında SM-2 alanları yoksa ekle
+            cursor.execute("PRAGMA table_info(wordbook)")
+            cols = [col[1] for col in cursor.fetchall()]
+            if "ease_factor" not in cols:
+                cursor.execute("ALTER TABLE wordbook ADD COLUMN ease_factor REAL DEFAULT 2.5")
+            if "interval_days" not in cols:
+                cursor.execute("ALTER TABLE wordbook ADD COLUMN interval_days INTEGER DEFAULT 0")
+            if "repetitions" not in cols:
+                cursor.execute("ALTER TABLE wordbook ADD COLUMN repetitions INTEGER DEFAULT 0")
+            if "last_reviewed_at" not in cols:
+                cursor.execute("ALTER TABLE wordbook ADD COLUMN last_reviewed_at TIMESTAMP DEFAULT NULL")
+            if "next_review_date" not in cols:
+                cursor.execute("ALTER TABLE wordbook ADD COLUMN next_review_date TEXT DEFAULT NULL")
 
             # 2. Arama Geçmişi Tablosu
             cursor.execute("""
@@ -141,7 +160,10 @@ class Database:
     # --- KELİME DEFTERİ METOTLARI ---
     def add_word(self, german: str, turkish: str, article: str = "", plural: str = "",
                  part_of_speech: str = "", example_de: str = "", example_tr: str = "",
-                 notes: str = "", status: str = "learning", tags: str = "", **kwargs) -> int:
+                 notes: str = "", status: str = "learning", tags: str = "",
+                 ease_factor: float = 2.5, interval_days: int = 0, repetitions: int = 0,
+                 last_reviewed_at: Optional[str] = None, next_review_date: Optional[str] = None,
+                 **kwargs) -> int:
         clean_german = (german or "").strip()
         if not clean_german:
             return -1
@@ -157,23 +179,29 @@ class Database:
             cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (clean_german,))
             existing = cursor.fetchone()
             if existing:
-                # Güncelle
+                # Güncelle: Var olan kelimenin SM-2 alanları ve öğrenme geçmişi korunur!
                 cursor.execute("""
                     UPDATE wordbook SET
                         article = ?, plural = ?, turkish = ?, part_of_speech = ?,
-                        example_de = ?, example_tr = ?, notes = ?, status = ?
+                        example_de = ?, example_tr = ?, notes = ?
                     WHERE id = ?
-                """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, status, existing["id"]))
+                """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, existing["id"]))
                 conn.commit()
                 return existing["id"]
             else:
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                assigned_next_review = next_review_date or today_str
                 cursor.execute("""
                     INSERT INTO wordbook (german, article, plural, turkish, part_of_speech,
-                                          example_de, example_tr, notes, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                          example_de, example_tr, notes, status,
+                                          ease_factor, interval_days, repetitions,
+                                          last_reviewed_at, next_review_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (german.strip(), article.strip(), plural.strip(), turkish.strip(),
                       part_of_speech.strip(), example_de.strip(), example_tr.strip(),
-                      clean_notes, status))
+                      clean_notes, status,
+                      ease_factor, interval_days, repetitions,
+                      last_reviewed_at, assigned_next_review))
                 conn.commit()
                 return cursor.lastrowid
 
@@ -187,6 +215,7 @@ class Database:
             ("Freund", "arkadaş, dost", "der", "die Freunde", "İsim (Nomen)", "Er ist mein bester Freund.", "O benim en iyi arkadaşım.", "Başlangıç paketi")
         ]
         count = 0
+        today_str = datetime.now().strftime("%Y-%m-%d")
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) as cnt FROM wordbook")
@@ -194,9 +223,11 @@ class Database:
                 for de, tr, art, pl, pos, ex_de, ex_tr, note in starters:
                     cursor.execute("""
                         INSERT INTO wordbook (german, article, plural, turkish, part_of_speech,
-                                              example_de, example_tr, notes, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'learning')
-                    """, (de, art, pl, tr, pos, ex_de, ex_tr, note))
+                                              example_de, example_tr, notes, status,
+                                              ease_factor, interval_days, repetitions,
+                                              last_reviewed_at, next_review_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'learning', 2.5, 0, 0, NULL, ?)
+                    """, (de, art, pl, tr, pos, ex_de, ex_tr, note, today_str))
                     count += 1
                 conn.commit()
         return count
@@ -273,3 +304,108 @@ class Database:
                         back += f" ({w['example_tr']})"
                 writer.writerow([front, back, w['part_of_speech'], w['status']])
         return len(words)
+
+    def get_word_by_id(self, word_id: int) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM wordbook WHERE id = ?", (word_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_sm2_review(self, word_id: int, quality: int,
+                          review_date: Optional[Union[str, date, datetime]] = None) -> Optional[Dict[str, Any]]:
+        """
+        SuperMemo 2 (SM-2) Algoritması ile kelime tekrarını günceller.
+        
+        Parametreler:
+            word_id: Kelimenin veritabanı ID'si
+            quality: 0-5 arası hatırlama kalitesi:
+                     0: Tamamen unutuldu / Blackout
+                     1: Yanlış hatırlandı
+                     2: Yanlış ancak cevabı görünce hatırlandı
+                     3: Güçlükle hatırlandı (geçer)
+                     4: Tereddütle hatırlandı (iyi)
+                     5: Mükemmel hatırlandı (kolay)
+            review_date: İsteğe bağlı tekrar tarihi (varsayılan: bugün)
+            
+        Dönüş:
+            Güncellenmiş kelime sözlüğü veya kelime bulunamazsa None.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM wordbook WHERE id = ?", (word_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            row_dict = dict(row)
+            ef = float(row_dict.get("ease_factor") if row_dict.get("ease_factor") is not None else 2.5)
+            interval = int(row_dict.get("interval_days") if row_dict.get("interval_days") is not None else 0)
+            reps = int(row_dict.get("repetitions") if row_dict.get("repetitions") is not None else 0)
+
+            # Tarih belirleme
+            if review_date is None:
+                current_date = datetime.now().date()
+            elif isinstance(review_date, str):
+                current_date = datetime.strptime(review_date, "%Y-%m-%d").date()
+            elif isinstance(review_date, datetime):
+                current_date = review_date.date()
+            else:
+                current_date = review_date
+
+            # SM-2 Mantığı:
+            if quality < 3:
+                # Başarısız hatırlama: tekrarlar sıfırlanır, aralık 1 güne iner, ease_factor DEĞİŞMEZ
+                new_reps = 0
+                new_interval = 1
+                new_ef = ef
+            else:
+                # Başarılı hatırlama (quality >= 3)
+                if reps == 0:
+                    new_interval = 1
+                elif reps == 1:
+                    new_interval = 6
+                else:
+                    new_interval = max(1, int(round(interval * ef)))
+
+                new_reps = reps + 1
+
+                # EF güncelleme formülü: EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+                ef_delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
+                new_ef = round(ef + ef_delta, 2)
+                if new_ef < 1.3:
+                    new_ef = 1.3
+
+            next_date = current_date + timedelta(days=new_interval)
+            next_date_str = next_date.strftime("%Y-%m-%d")
+            last_reviewed_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            cursor.execute("""
+                UPDATE wordbook SET
+                    ease_factor = ?,
+                    interval_days = ?,
+                    repetitions = ?,
+                    last_reviewed_at = ?,
+                    next_review_date = ?,
+                    status = 'reviewed'
+                WHERE id = ?
+            """, (new_ef, new_interval, new_reps, last_reviewed_str, next_date_str, word_id))
+            conn.commit()
+
+            cursor.execute("SELECT * FROM wordbook WHERE id = ?", (word_id,))
+            updated_row = cursor.fetchone()
+            return dict(updated_row) if updated_row else None
+
+    def get_due_words(self, target_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Tekrar zamanı gelmiş (next_review_date <= target_date) kelimeleri döner."""
+        if not target_date:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM wordbook
+                WHERE next_review_date IS NOT NULL AND next_review_date <= ?
+                ORDER BY next_review_date ASC, id ASC
+            """, (target_date,))
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows]
