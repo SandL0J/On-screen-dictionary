@@ -22,6 +22,7 @@ class WordbookWindow:
 
         # Flashcard durumu
         self.flashcard_words: List[Dict[str, Any]] = []
+        self.flashcard_mode = "due"  # Varsayılan mod: "due"
         self.current_card_index = 0
         self.is_card_flipped = False
 
@@ -44,7 +45,7 @@ class WordbookWindow:
 
         self.stats_lbl = tk.Label(
             self.top_frame,
-            text="Toplam: 0 kelime",
+            text="Toplam: 0 | Bugün Tekrar: 0 | Öğrenilen: 0",
             font=("Segoe UI", 9),
             fg="#a1a1aa",
             bg="#27272a"
@@ -149,12 +150,52 @@ class WordbookWindow:
         self.tree.bind("<Double-1>", self._on_row_double_click)
 
     def _setup_flashcard_tab(self):
+        # Mod Seçim Çubuğu (Due vs All)
+        self.fc_mode_frame = tk.Frame(self.tab_flashcards, bg="#18181b", pady=6)
+        self.fc_mode_frame.pack(fill="x", padx=20, pady=(10, 0))
+
+        tk.Label(
+            self.fc_mode_frame,
+            text="Çalışma Modu:",
+            font=("Segoe UI", 9, "bold"),
+            fg="#a1a1aa",
+            bg="#18181b"
+        ).pack(side="left", padx=(0, 8))
+
+        self.btn_mode_due = tk.Button(
+            self.fc_mode_frame,
+            text="🎯 Vadesi Gelenler (Due)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#3b82f6",
+            fg="#ffffff",
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            command=lambda: self._set_flashcard_mode("due")
+        )
+        self.btn_mode_due.pack(side="left", padx=4)
+
+        self.btn_mode_all = tk.Button(
+            self.fc_mode_frame,
+            text="📚 Tüm Kelimeler",
+            font=("Segoe UI", 9),
+            bg="#27272a",
+            fg="#d4d4d8",
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            command=lambda: self._set_flashcard_mode("all")
+        )
+        self.btn_mode_all.pack(side="left", padx=4)
+
         # Kart Konteyneri
-        self.card_container = tk.Frame(self.tab_flashcards, bg="#18181b", pady=20)
+        self.card_container = tk.Frame(self.tab_flashcards, bg="#18181b", pady=10)
         self.card_container.pack(fill="both", expand=True)
 
         self.card_box = tk.Frame(self.card_container, bg="#27272a", padx=30, pady=25, relief="solid", bd=1)
-        self.card_box.pack(pady=20, ipadx=40, ipady=30)
+        self.card_box.pack(pady=15, ipadx=40, ipady=25)
 
         self.fc_progress_lbl = tk.Label(self.card_box, text="", font=("Segoe UI", 8), fg="#71717a", bg="#27272a")
         self.fc_progress_lbl.pack(anchor="e", pady=(0, 4))
@@ -175,17 +216,126 @@ class WordbookWindow:
         self.fc_turkish_lbl.pack(pady=10)
 
         # Kart Alt Butonları
-        fc_btn_frame = tk.Frame(self.tab_flashcards, bg="#18181b")
-        fc_btn_frame.pack(pady=(0, 20))
+        self.fc_btn_frame = tk.Frame(self.tab_flashcards, bg="#18181b")
+        self.fc_btn_frame.pack(pady=(0, 8))
 
-        btn_prev = tk.Button(fc_btn_frame, text="⬅️ Önceki", font=("Segoe UI", 10), bg="#3f3f46", fg="#fafafa", relief="flat", padx=12, pady=6, cursor="hand2", command=self._prev_card)
-        btn_prev.pack(side="left", padx=6)
+        self.btn_prev = tk.Button(self.fc_btn_frame, text="⬅️ Önceki", font=("Segoe UI", 10), bg="#3f3f46", fg="#fafafa", relief="flat", padx=12, pady=6, cursor="hand2", command=self._prev_card)
+        self.btn_prev.pack(side="left", padx=6)
 
-        self.btn_flip = tk.Button(fc_btn_frame, text="🔄 Kartı Çevir", font=("Segoe UI", 10, "bold"), bg="#6366f1", fg="#ffffff", relief="flat", padx=16, pady=6, cursor="hand2", command=self._flip_card)
+        self.btn_flip = tk.Button(self.fc_btn_frame, text="🔄 Kartı Çevir", font=("Segoe UI", 10, "bold"), bg="#6366f1", fg="#ffffff", relief="flat", padx=16, pady=6, cursor="hand2", command=self._flip_card)
         self.btn_flip.pack(side="left", padx=6)
 
-        btn_next = tk.Button(fc_btn_frame, text="➡️ Sonraki", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", padx=14, pady=6, cursor="hand2", command=self._next_card)
-        btn_next.pack(side="left", padx=6)
+        self.btn_next = tk.Button(self.fc_btn_frame, text="➡️ Sonraki", font=("Segoe UI", 10, "bold"), bg="#10b981", fg="#ffffff", relief="flat", padx=14, pady=6, cursor="hand2", command=self._next_card)
+        self.btn_next.pack(side="left", padx=6)
+
+        # SM-2 Derecelendirme Butonları Çerçevesi (Kart çevrildiğinde açılır)
+        self.rating_frame = tk.Frame(self.tab_flashcards, bg="#18181b")
+
+        self.btn_rate_again = tk.Button(
+            self.rating_frame,
+            text="🔴 Yeniden (1)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#ef4444",
+            fg="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            command=lambda: self._rate_card(1)
+        )
+        self.btn_rate_again.pack(side="left", padx=4)
+
+        self.btn_rate_hard = tk.Button(
+            self.rating_frame,
+            text="🟠 Zor (3)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#f97316",
+            fg="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            command=lambda: self._rate_card(3)
+        )
+        self.btn_rate_hard.pack(side="left", padx=4)
+
+        self.btn_rate_good = tk.Button(
+            self.rating_frame,
+            text="🟢 İyi (4)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#10b981",
+            fg="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            command=lambda: self._rate_card(4)
+        )
+        self.btn_rate_good.pack(side="left", padx=4)
+
+        self.btn_rate_easy = tk.Button(
+            self.rating_frame,
+            text="🔵 Kolay (5)",
+            font=("Segoe UI", 9, "bold"),
+            bg="#3b82f6",
+            fg="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+            command=lambda: self._rate_card(5)
+        )
+        self.btn_rate_easy.pack(side="left", padx=4)
+
+    @property
+    def is_rating_visible(self) -> bool:
+        """Puanlama butonları çerçevesinin görünür olup olmadığını döner."""
+        if not hasattr(self, "rating_frame"):
+            return False
+        try:
+            return bool(self.rating_frame.pack_info())
+        except (tk.TclError, Exception):
+            return False
+
+    def _set_flashcard_mode(self, mode: str):
+        """Flashcard çalışma modunu değiştirir ('due' veya 'all')."""
+        self.flashcard_mode = mode
+        if mode == "due":
+            self.btn_mode_due.configure(bg="#3b82f6", fg="#ffffff", font=("Segoe UI", 9, "bold"))
+            self.btn_mode_all.configure(bg="#27272a", fg="#d4d4d8", font=("Segoe UI", 9))
+        else:
+            self.btn_mode_due.configure(bg="#27272a", fg="#d4d4d8", font=("Segoe UI", 9))
+            self.btn_mode_all.configure(bg="#3b82f6", fg="#ffffff", font=("Segoe UI", 9, "bold"))
+        self._load_flashcard_words()
+
+    def _load_flashcard_words(self):
+        """Seçili moda göre flashcard kelimelerini yükler."""
+        if self.flashcard_mode == "due":
+            if hasattr(self.db, "get_due_words"):
+                self.flashcard_words = list(self.db.get_due_words(target_date=None, limit=None))
+            else:
+                self.flashcard_words = []
+        else:
+            if hasattr(self.db, "get_words"):
+                self.flashcard_words = list(self.db.get_words())
+                if self.flashcard_words:
+                    random.shuffle(self.flashcard_words)
+            else:
+                self.flashcard_words = []
+
+        self.current_card_index = 0
+        self._show_current_flashcard()
+
+    def _update_stats_display(self):
+        """Üst istatistik etiketini (stats_lbl) SM-2 verilerine göre günceller."""
+        if hasattr(self.db, "get_review_statistics"):
+            stats = self.db.get_review_statistics()
+            self.stats_lbl.configure(
+                text=f"Toplam: {stats['total_words']} | Bugün Tekrar: {stats['due_today']} | Öğrenilen: {stats['learned_words']}"
+            )
+        elif hasattr(self.db, "get_words"):
+            total = len(self.db.get_words())
+            self.stats_lbl.configure(text=f"Toplam: {total} | Bugün Tekrar: 0 | Öğrenilen: 0")
 
     def _load_words(self):
         # Listeyi temizle
@@ -211,23 +361,38 @@ class WordbookWindow:
                 w["status"]
             ))
 
-        self.stats_lbl.configure(text=f"Toplam: {len(words)} kelime")
-        self.flashcard_words = list(words)
-        if self.flashcard_words:
-            random.shuffle(self.flashcard_words)
-            self.current_card_index = 0
-        self._show_current_flashcard()
+        self._update_stats_display()
+        self._load_flashcard_words()
 
     def _show_current_flashcard(self):
+        total_words = 0
+        if hasattr(self.db, "get_review_statistics"):
+            stats = self.db.get_review_statistics()
+            total_words = stats.get("total_words", 0)
+        elif hasattr(self.db, "get_words"):
+            total_words = len(self.db.get_words())
+
+        if hasattr(self, "rating_frame"):
+            self.rating_frame.pack_forget()
+
         if not self.flashcard_words:
             self.fc_progress_lbl.configure(text="")
-            self.fc_german_lbl.configure(text="Henüz kayıtlı kelime yok")
             self.fc_article_lbl.configure(text="")
             self.fc_plural_lbl.configure(text="")
-            self.fc_turkish_lbl.configure(text="Sözlük kartından kelimeleri deftere ekleyin.")
+            self.is_card_flipped = False
+
+            if total_words == 0:
+                self.fc_german_lbl.configure(text="Henüz kayıtlı kelime yok")
+                self.fc_turkish_lbl.configure(text="Sözlük kartından kelimeleri deftere ekleyin.", fg="#71717a")
+            else:
+                self.fc_german_lbl.configure(text="Tebrikler! Bugünlük tekrar bitti.")
+                self.fc_turkish_lbl.configure(text="Bugün tekrar edilecek başka kelime kalmadı.", fg="#4ade80")
             return
 
         total = len(self.flashcard_words)
+        if self.current_card_index >= total:
+            self.current_card_index = 0
+
         self.fc_progress_lbl.configure(text=f"Kart {self.current_card_index + 1} / {total}")
         w = self.flashcard_words[self.current_card_index]
         self.is_card_flipped = False
@@ -244,9 +409,40 @@ class WordbookWindow:
         if not self.is_card_flipped:
             self.fc_turkish_lbl.configure(text=w.get("turkish", ""), fg="#4ade80")
             self.is_card_flipped = True
+            if hasattr(self, "rating_frame"):
+                self.rating_frame.pack(pady=(0, 15))
         else:
             self.fc_turkish_lbl.configure(text="[ Kartı Çevir butonuna tıklayın ]", fg="#71717a")
             self.is_card_flipped = False
+            if hasattr(self, "rating_frame"):
+                self.rating_frame.pack_forget()
+
+    def _rate_card(self, quality: int):
+        """SM-2 puanlaması yapar ve sıradaki karta geçer."""
+        if not self.flashcard_words:
+            return
+
+        if self.current_card_index >= len(self.flashcard_words):
+            self.current_card_index = 0
+
+        current_card = self.flashcard_words[self.current_card_index]
+        word_id = current_card.get("id")
+
+        if word_id is not None and hasattr(self.db, "update_sm2_review"):
+            self.db.update_sm2_review(word_id, quality)
+
+        if self.flashcard_mode == "due":
+            # Değerlendirilen kelime kuyruktan çıkarılır
+            self.flashcard_words.pop(self.current_card_index)
+            if self.flashcard_words and self.current_card_index >= len(self.flashcard_words):
+                self.current_card_index = 0
+        else:
+            # Tüm kelimeler modunda kelime listeden çıkarılmaz, sadece sıradaki karta ilerlenir
+            if self.flashcard_words:
+                self.current_card_index = (self.current_card_index + 1) % len(self.flashcard_words)
+
+        self._update_stats_display()
+        self._show_current_flashcard()
 
     def _prev_card(self):
         if not self.flashcard_words:
@@ -259,6 +455,7 @@ class WordbookWindow:
             return
         self.current_card_index = (self.current_card_index + 1) % len(self.flashcard_words)
         self._show_current_flashcard()
+
 
     def _play_flashcard_audio(self):
         """Dinleme özelliği devre dışı bırakılmıştır."""
