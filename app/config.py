@@ -23,8 +23,9 @@ DEFAULT_CONFIG = {
     "hover_enabled": True,
     "hover_delay_ms": 300,
     "hover_trigger_mode": "mouse_side",
+    "hover_auto_hide_seconds": 5,
     "use_gemini_direct": False,
-    "gemini_model": "gemini-1.5-flash",
+    "gemini_model": "gemini-3.1-flash-lite",
     "first_run_completed": False,
     "tesseract_cmd": "",
     "ocr_engine_preference": "auto",
@@ -44,6 +45,9 @@ def load_config() -> dict:
             # Eksik alanları varsayılanlarla doldur
             merged = DEFAULT_CONFIG.copy()
             merged.update(data)
+            # Google tarafından kaldırılan eski modelleri güncel Flash modeline yükselt
+            if merged.get("gemini_model") in ("gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-8b"):
+                merged["gemini_model"] = "gemini-3.1-flash-lite"
             # Dinleme özelliği kaldırıldığı için eski dosyalardaki sound_enabled anahtarını temizle
             merged.pop("sound_enabled", None)
             return merged

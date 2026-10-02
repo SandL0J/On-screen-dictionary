@@ -268,6 +268,16 @@ class TestHotkeyManagerLogic(unittest.TestCase):
         self.mgr._handle_key_event(VK_SPACE, is_down=False)
         self.mgr._handle_key_event(VK_TAB, is_down=False)
 
+        # Alt+C tetikle (Panoyu / Seçimi Çevir)
+        self.mgr._handle_key_event(VK_MENU, is_down=True)
+        self.mgr._handle_key_event(VK_C, is_down=True)
+        time.sleep(0.05)
+        self.assertEqual(calls["clip"], 1)
+        self.assertEqual(calls["ocr"], 1)
+        self.assertEqual(calls["overlay"], 1)
+        self.mgr._handle_key_event(VK_C, is_down=False)
+        self.mgr._handle_key_event(VK_MENU, is_down=False)
+
     def test_legacy_register_backward_compatibility(self):
         """Eski register(id, mod, vk, cb) ve register(id, 0, 0, cb) çağrıları hatasız çalışmalı."""
         called_1 = False
@@ -498,6 +508,86 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             self.assertTrue(overlay._is_bar_visible)
             # Snipper başlatılmış olmalı
             mock_start_selection.assert_called_once()
+        finally:
+            overlay.stop()
+
+    @patch("app.hotkey_manager.HotkeyManager.start")
+    def test_lookup_from_clipboard_with_selected_text(self, mock_start):
+        """Alt+C basıldığında ekranda seçili metin varsa doğrudan kopyalanıp çevrilmeli."""
+        if not self.tk_available:
+            self.skipTest("Tkinter mevcut değil")
+
+        overlay = MainOverlay(
+            root=self.root,
+            translator=TranslationEngine(db=self.db),
+            ocr_engine=OCREngine(),
+            db=self.db,
+            clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
+            config={"hotkey_clipboard": "alt+c"}
+        )
+        try:
+            with patch("app.gui.main_overlay.copy_selected_text_windows", return_value="Entscheidung"):
+                with patch.object(overlay, "lookup_text") as mock_lookup:
+                    t = overlay._lookup_from_clipboard()
+                    if t:
+                        t.join(timeout=1.0)
+                    self.root.update()
+                    mock_lookup.assert_called_with("Entscheidung")
+        finally:
+            overlay.stop()
+
+    @patch("app.hotkey_manager.HotkeyManager.start")
+    def test_lookup_from_clipboard_fallback(self, mock_start):
+        """Seçim boşsa ama panoda metin varsa panodaki metin çevrilmeli."""
+        if not self.tk_available:
+            self.skipTest("Tkinter mevcut değil")
+
+        overlay = MainOverlay(
+            root=self.root,
+            translator=TranslationEngine(db=self.db),
+            ocr_engine=OCREngine(),
+            db=self.db,
+            clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
+            config={"hotkey_clipboard": "alt+c"}
+        )
+        try:
+            with patch("app.gui.main_overlay.copy_selected_text_windows", return_value=None):
+                with patch("app.gui.main_overlay.get_clipboard_text", return_value="Apfel"):
+                    with patch.object(overlay, "lookup_text") as mock_lookup:
+                        t = overlay._lookup_from_clipboard()
+                        if t:
+                            t.join(timeout=1.0)
+                        self.root.update()
+                        mock_lookup.assert_called_with("Apfel")
+        finally:
+            overlay.stop()
+
+    @patch("app.hotkey_manager.HotkeyManager.start")
+    def test_lookup_from_clipboard_empty_shows_feedback(self, mock_start):
+        """Hem seçim hem pano boşsa kullanıcıya sessiz kalmayıp bilgilendirici HUD gösterilmeli."""
+        if not self.tk_available:
+            self.skipTest("Tkinter mevcut değil")
+
+        overlay = MainOverlay(
+            root=self.root,
+            translator=TranslationEngine(db=self.db),
+            ocr_engine=OCREngine(),
+            db=self.db,
+            clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
+            config={"hotkey_clipboard": "alt+c"}
+        )
+        try:
+            with patch("app.gui.main_overlay.copy_selected_text_windows", return_value=None):
+                with patch("app.gui.main_overlay.get_clipboard_text", return_value=None):
+                    with patch.object(overlay, "_show_hud") as mock_show:
+                        t = overlay._lookup_from_clipboard()
+                        if t:
+                            t.join(timeout=1.0)
+                        self.root.update()
+                        mock_show.assert_called_once()
+                        arg = mock_show.call_args[0][0]
+                        self.assertIn("error", arg)
+                        self.assertIn("bulunamadı", arg["error"])
         finally:
             overlay.stop()
 

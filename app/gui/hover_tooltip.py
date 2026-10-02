@@ -4,6 +4,7 @@ Video veya metin izlerken farenin tam üstünde veya yanında beliren;
 artikel rengi, çoğul hali, Türkçe karşılığı ve hızlı kaydetme yıldızı
 içeren kompakt, yarı saydam ve hafif mini kart.
 """
+import threading
 import tkinter as tk
 from typing import Dict, Any, Optional
 
@@ -20,9 +21,10 @@ class HoverTooltip:
     hafif ve şık mini çeviri balonu.
     """
 
-    def __init__(self, root: tk.Tk, db=None):
+    def __init__(self, root: tk.Tk, db=None, auto_hide_seconds: int = 5):
         self.root = root
         self.db = db
+        self.auto_hide_seconds = max(0, int(auto_hide_seconds))
         self._current_data: Optional[Dict[str, Any]] = None
         self._auto_hide_id: Optional[str] = None
 
@@ -32,8 +34,16 @@ class HoverTooltip:
         self.window.attributes("-topmost", True)
         self.window.attributes("-alpha", 0.94)
         self.window.configure(bg="#27272a")
+        self.window.bind("<Destroy>", lambda e: self._cancel_auto_hide())
 
         self._init_ui()
+
+    def set_auto_hide_seconds(self, seconds: int):
+        """Kutucuğun otomatik kapanma süresini saniye cinsinden günceller (0 = otomatik kapanmaz)."""
+        try:
+            self.auto_hide_seconds = max(0, int(seconds))
+        except (ValueError, TypeError):
+            self.auto_hide_seconds = 5
 
     def _cancel_auto_hide(self):
         """Aktif otomatik kapanma zamanlayıcısını iptal eder."""
@@ -44,6 +54,17 @@ class HoverTooltip:
             except Exception:
                 pass
             self._auto_hide_id = None
+
+    def has_active_auto_hide(self) -> bool:
+        """Aktif bir otomatik kapanma zamanlayıcısı (sayacı) olup olmadığını döner."""
+        return self._auto_hide_id is not None
+
+    def is_visible(self) -> bool:
+        """Kutucuğun şu an ekranda görünür olup olmadığını döner."""
+        try:
+            return bool(self.window.winfo_exists() and self.window.winfo_viewable())
+        except Exception:
+            return False
 
     def _init_ui(self):
         # Dış çerçeve ve dolgu
@@ -84,6 +105,22 @@ class HoverTooltip:
         )
         self.lbl_plural.pack(side="left", padx=(0, 6))
 
+        # Kapatma Çarpısı (Sağ üst köşe)
+        self.btn_close = tk.Label(
+            self.top_row,
+            text="✕",
+            font=("Segoe UI", 9, "bold"),
+            fg="#ef4444",
+            bg="#18181b",
+            cursor="hand2",
+            padx=2,
+            pady=0,
+        )
+        self.btn_close.pack(side="right", padx=(4, 0))
+        self.btn_close.bind("<Button-1>", lambda e: self.hide())
+        self.btn_close.bind("<Enter>", lambda e: self.btn_close.configure(fg="#f87171"))
+        self.btn_close.bind("<Leave>", lambda e: self.btn_close.configure(fg="#ef4444"))
+
         # Hızlı Kaydet Yıldızı
         self.btn_star = tk.Label(
             self.top_row,
@@ -93,7 +130,7 @@ class HoverTooltip:
             bg="#18181b",
             cursor="hand2",
         )
-        self.btn_star.pack(side="right", padx=(4, 0))
+        self.btn_star.pack(side="right", padx=(4, 2))
         self.btn_star.bind("<Button-1>", lambda e: self._toggle_save())
 
         # Alt Satır: Türkçe Anlamı
@@ -109,6 +146,10 @@ class HoverTooltip:
         )
         self.lbl_turkish.pack(fill="x", anchor="w", pady=(3, 0))
 
+        # Fare kartın üzerine geldiğinde otomatik kapanmayı durdur
+        self.window.bind("<Enter>", lambda e: self._cancel_auto_hide())
+        self.outer_frame.bind("<Enter>", lambda e: self._cancel_auto_hide())
+
     def show_loading(self, cursor_x: int, cursor_y: int, message: str = "🔍 Okunuyor..."):
         """Tetikleme anında hemen beliren hafif yükleniyor göstergesi."""
         self._cancel_auto_hide()
@@ -122,6 +163,8 @@ class HoverTooltip:
                 self.btn_star.pack_forget()
                 self.lbl_turkish.pack_forget()
 
+                self.btn_close.pack(side="right", padx=(4, 0))
+
                 self.lbl_german.configure(
                     text=message,
                     font=("Segoe UI", 9, "italic"),
@@ -130,7 +173,7 @@ class HoverTooltip:
                 self.lbl_german.pack(side="left", padx=2)
 
                 self.window.update_idletasks()
-                w = max(self.window.winfo_reqwidth(), 120)
+                w = max(self.window.winfo_reqwidth(), 140)
                 h = max(self.window.winfo_reqheight(), 32)
 
                 x = cursor_x - 20
@@ -168,6 +211,8 @@ class HoverTooltip:
                 self.btn_star.pack_forget()
                 self.lbl_turkish.pack_forget()
 
+                self.btn_close.pack(side="right", padx=(4, 0))
+
                 self.lbl_german.configure(
                     text=message,
                     font=("Segoe UI", 9, "bold"),
@@ -176,7 +221,7 @@ class HoverTooltip:
                 self.lbl_german.pack(side="left", padx=2)
 
                 self.window.update_idletasks()
-                w = max(self.window.winfo_reqwidth(), 140)
+                w = max(self.window.winfo_reqwidth(), 150)
                 h = max(self.window.winfo_reqheight(), 32)
 
                 x = cursor_x - 20
@@ -197,14 +242,23 @@ class HoverTooltip:
         except Exception:
             pass
 
-    def show(self, word_data: Dict[str, Any], cursor_x: int, cursor_y: int):
+    def show(self, word_data: Dict[str, Any], cursor_x: int, cursor_y: int, auto_hide_seconds: Optional[int] = None):
         """Kartı verilen kelime verisiyle farenin yakınında konumlandırıp gösterir."""
         if not word_data:
             return
         self._cancel_auto_hide()
         self._current_data = word_data
 
+        duration = self.auto_hide_seconds if auto_hide_seconds is None else max(0, int(auto_hide_seconds))
+        if duration > 0 and self.root.winfo_exists():
+            self._auto_hide_id = self.root.after(int(duration * 1000), self.hide)
+
         def _do_show():
+            try:
+                if not self.window.winfo_exists():
+                    return
+            except Exception:
+                return
             analysis = word_data.get("analysis", {})
 
             # 1. Almanca Kelime
@@ -276,8 +330,11 @@ class HoverTooltip:
                 self.lbl_plural.configure(text="")
                 self.lbl_plural.pack_forget()
 
+            # Kapatma Çarpısı (Sağ üst köşe)
+            self.btn_close.pack(side="right", padx=(4, 0))
+
             # Hızlı Kaydet Yıldızı
-            self.btn_star.pack(side="right", padx=(4, 0))
+            self.btn_star.pack(side="right", padx=(4, 2))
             if self.db and self.db.is_word_saved(german_word):
                 self.btn_star.configure(text="★", fg="#eab308")
             else:
@@ -320,11 +377,14 @@ class HoverTooltip:
             self.window.attributes("-topmost", True)
             self.window.lift()
 
-        try:
-            if self.root.winfo_exists():
-                self.root.after(0, _do_show)
-        except Exception:
-            pass
+        if threading.current_thread() is threading.main_thread():
+            _do_show()
+        else:
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, _do_show)
+            except Exception:
+                pass
 
     def hide(self):
         """Kartı gizler."""
@@ -337,11 +397,14 @@ class HoverTooltip:
             except Exception:
                 pass
 
-        try:
-            if self.root.winfo_exists():
-                self.root.after(0, _do_hide)
-        except Exception:
-            pass
+        if threading.current_thread() is threading.main_thread():
+            _do_hide()
+        else:
+            try:
+                if self.root.winfo_exists():
+                    self.root.after(0, _do_hide)
+            except Exception:
+                pass
 
     def _toggle_save(self):
         """Kelime defterine ekler veya çıkarır."""

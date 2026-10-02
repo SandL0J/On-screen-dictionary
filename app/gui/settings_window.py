@@ -6,7 +6,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Callable, Optional
 import threading
-from app.config import save_config
+from datetime import datetime
+from app.config import save_config, DEFAULT_CONFIG
 from app.hotkey_manager import validate_hotkey_string, format_hotkey
 from app.startup_manager import is_startup_enabled, enable_startup, disable_startup
 
@@ -27,15 +28,93 @@ class SettingsWindow:
 
         self.window = tk.Toplevel(parent)
         self.window.title("Ayarlar • Ekran Sözlüğü")
-        self.window.geometry("560x860")
+        try:
+            screen_h = self.window.winfo_screenheight()
+            win_h = min(780, max(640, screen_h - 100))
+        except Exception:
+            win_h = 740
+        self.window.geometry(f"580x{win_h}")
+        self.window.minsize(540, 580)
         self.window.resizable(True, True)
         self.window.configure(bg="#18181b")
 
         self._init_ui()
 
     def _init_ui(self):
-        main_frame = tk.Frame(self.window, bg="#18181b", padx=20, pady=16)
-        main_frame.pack(fill="both", expand=True)
+        # Alt Sabit Eylem ve Durum Çubuğu (Footer Frame) - Daima ekranın altında görünür kalır
+        footer_frame = tk.Frame(self.window, bg="#18181b", padx=16, pady=10)
+        footer_frame.pack(side="bottom", fill="x")
+
+        # İnce ayırıcı çizgi
+        tk.Frame(footer_frame, height=1, bg="#27272a").pack(fill="x", pady=(0, 6))
+
+        # Canlı Durum Bildirim Çubuğu (Kullanıcı ayarın uygulandığını buradan anında anlar)
+        self.lbl_save_status = tk.Label(
+            footer_frame,
+            text="💡 Değişiklikleri uygulamak için 'Ayarları Kaydet ve Uygula' butonuna basın.",
+            font=("Segoe UI", 9, "bold"),
+            fg="#a1a1aa",
+            bg="#18181b",
+            anchor="center"
+        )
+        self.lbl_save_status.pack(fill="x", pady=(0, 8))
+
+        # Eylem Butonları Satırı
+        action_bar = tk.Frame(footer_frame, bg="#18181b")
+        action_bar.pack(fill="x")
+
+        self.btn_reset = tk.Button(
+            action_bar,
+            text="🔄 Varsayılanlara Sıfırla",
+            font=("Segoe UI", 9, "bold"),
+            bg="#27272a",
+            fg="#f59e0b",
+            activebackground="#3f3f46",
+            activeforeground="#fbbf24",
+            relief="flat",
+            padx=10,
+            pady=6,
+            cursor="hand2",
+            command=self._reset_to_defaults
+        )
+        self.btn_reset.pack(side="left", padx=(0, 6))
+
+        self.btn_save = tk.Button(
+            action_bar,
+            text="💾 Ayarları Kaydet ve Uygula",
+            font=("Segoe UI", 9, "bold"),
+            bg="#4f46e5",
+            fg="#ffffff",
+            activebackground="#4338ca",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=14,
+            pady=6,
+            cursor="hand2",
+            command=self._save
+        )
+        self.btn_save.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+        self.btn_close = tk.Button(
+            action_bar,
+            text="✕ Kapat",
+            font=("Segoe UI", 9),
+            bg="#27272a",
+            fg="#d4d4d8",
+            activebackground="#3f3f46",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=6,
+            cursor="hand2",
+            command=self.close
+        )
+        self.btn_close.pack(side="right")
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Destroy>", self._on_destroy)
+
+        main_frame = tk.Frame(self.window, bg="#18181b", padx=16, pady=10)
+        main_frame.pack(side="top", fill="both", expand=True)
 
         tk.Label(
             main_frame,
@@ -49,16 +128,24 @@ class SettingsWindow:
         self.var_clipboard = tk.BooleanVar(value=self.config.get("clipboard_auto_lookup", True))
         cb_clip = tk.Checkbutton(
             main_frame,
-            text="Ctrl+C ile panodaki Almanca metinleri anında çevir",
+            text="📋 Ctrl+C ile panodaki Almanca metinleri anında otomatik çevir",
             variable=self.var_clipboard,
-            font=("Segoe UI", 9),
-            fg="#fafafa",
+            font=("Segoe UI", 9, "bold"),
+            fg="#10b981",
             bg="#18181b",
             selectcolor="#27272a",
             activebackground="#18181b",
             activeforeground="#fafafa"
         )
-        cb_clip.pack(anchor="w", pady=2)
+        cb_clip.pack(anchor="w", pady=(2, 0))
+
+        tk.Label(
+            main_frame,
+            text="   (Herhangi bir uygulamada metin seçip Ctrl+C yaptığınız anda çeviri kartı açılır)",
+            font=("Segoe UI", 7, "italic"),
+            fg="#71717a",
+            bg="#18181b"
+        ).pack(anchor="w", pady=(0, 2))
 
         # 1b. Windows ile Otomatik Başlat
         self.var_startup = tk.BooleanVar(value=is_startup_enabled())
@@ -91,11 +178,11 @@ class SettingsWindow:
         cb_top.pack(anchor="w", pady=2)
 
         # 3. Otomatik Kapanma Süresi
-        duration_frame = tk.Frame(main_frame, bg="#18181b", pady=4)
+        duration_frame = tk.Frame(main_frame, bg="#18181b", pady=3)
         duration_frame.pack(fill="x")
         tk.Label(
             duration_frame,
-            text="Kart Otomatik Kapanma Süresi (sn):",
+            text="Büyük Çeviri Kartı Süresi:",
             font=("Segoe UI", 9),
             fg="#d4d4d8",
             bg="#18181b"
@@ -113,7 +200,7 @@ class SettingsWindow:
             fg="#fafafa"
         )
         sp_dur.pack(side="left", padx=8)
-        tk.Label(duration_frame, text="(0 = Elle kapatana kadar açık kalır)", font=("Segoe UI", 8), fg="#71717a", bg="#18181b").pack(side="left")
+        tk.Label(duration_frame, text="sn (OCR & Pano kartı için; 0 = elle kapatana kadar açık kalır)", font=("Segoe UI", 8), fg="#71717a", bg="#18181b").pack(side="left")
 
         # 4. Canlı Fare Üzerine Gelme (Hover) Ayarları
         hover_section = tk.LabelFrame(
@@ -126,12 +213,12 @@ class SettingsWindow:
             pady=6,
             relief="groove"
         )
-        hover_section.pack(fill="x", pady=(6, 6))
+        hover_section.pack(fill="x", pady=(4, 5))
 
         self.var_hover_enabled = tk.BooleanVar(value=self.config.get("hover_enabled", True))
         cb_hover = tk.Checkbutton(
             hover_section,
-            text="Canlı Hover Modu (Farenin altındaki kelimeyi otomatik oku)",
+            text="Canlı Hover Modu (Farenin altındaki kelimeyi okuma aktif)",
             variable=self.var_hover_enabled,
             font=("Segoe UI", 9, "bold"),
             fg="#c084fc",
@@ -140,11 +227,11 @@ class SettingsWindow:
             activebackground="#18181b",
             activeforeground="#fafafa"
         )
-        cb_hover.pack(anchor="w", pady=2)
+        cb_hover.pack(anchor="w", pady=1)
 
         f_hover_mode = tk.Frame(hover_section, bg="#18181b")
         f_hover_mode.pack(fill="x", pady=2)
-        tk.Label(f_hover_mode, text="Tetikleme Kuralı:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
+        tk.Label(f_hover_mode, text="Çeviri Tetikleyicisi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
 
         self.var_hover_trigger = tk.StringVar(value=self.config.get("hover_trigger_mode", "mouse_side"))
         trigger_options = [
@@ -171,7 +258,7 @@ class SettingsWindow:
             rb.pack(side="left", padx=2)
 
         f_hover_delay = tk.Frame(hover_section, bg="#18181b")
-        f_hover_delay.pack(fill="x", pady=2)
+        f_hover_delay.pack(fill="x", pady=1)
         tk.Label(f_hover_delay, text="Duraklama Süresi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
         self.var_hover_delay = tk.IntVar(value=self.config.get("hover_delay_ms", 300))
         sp_delay = tk.Spinbox(
@@ -188,6 +275,33 @@ class SettingsWindow:
         sp_delay.pack(side="left", padx=4)
         tk.Label(f_hover_delay, text="ms (Tavsiye: 250 - 350 ms)", font=("Segoe UI", 8), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
 
+        f_hover_dur = tk.Frame(hover_section, bg="#18181b")
+        f_hover_dur.pack(fill="x", pady=1)
+        tk.Label(f_hover_dur, text="Baloncuk Süresi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
+        self.var_hover_duration = tk.IntVar(value=self.config.get("hover_auto_hide_seconds", 5))
+        sp_h_dur = tk.Spinbox(
+            f_hover_dur,
+            from_=0,
+            to=60,
+            textvariable=self.var_hover_duration,
+            width=5,
+            font=("Segoe UI", 8),
+            bg="#27272a",
+            fg="#fafafa"
+        )
+        sp_h_dur.pack(side="left", padx=4)
+        tk.Label(f_hover_dur, text="sn (Fare kutucuğu için; 0 = sadece çarpı veya tıklama ile kapanır)", font=("Segoe UI", 8), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
+
+        tk.Label(
+            hover_section,
+            text="💡 İpucu: Kelimeyi çevirmek için farenizi üstüne götürüp Fare Yan Tuşuna (Mouse 4/5) basmanız yeterlidir.\nKlavyedeki Alt+V tuşu ise bu özelliği komple açıp kapatmaya yarar.",
+            font=("Segoe UI", 7, "italic"),
+            fg="#94a3b8",
+            bg="#18181b",
+            wraplength=490,
+            justify="left"
+        ).pack(fill="x", pady=(2, 2))
+
         # 5. Kısayol Tuşları (Global Hotkeys)
         hotkey_section = tk.LabelFrame(
             main_frame,
@@ -199,21 +313,21 @@ class SettingsWindow:
             pady=6,
             relief="groove"
         )
-        hotkey_section.pack(fill="x", pady=(4, 6))
+        hotkey_section.pack(fill="x", pady=(4, 5))
 
         # 5a. OCR Kısayolu
         f_ocr = tk.Frame(hotkey_section, bg="#18181b")
         f_ocr.pack(fill="x", pady=1)
-        tk.Label(f_ocr, text="Ekran Kırp / OCR:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=18, anchor="w").pack(side="left")
+        tk.Label(f_ocr, text="Ekran Kırpıcı (OCR):", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=22, anchor="w").pack(side="left")
         self.entry_hotkey_ocr = tk.Entry(f_ocr, font=("Segoe UI", 8, "bold"), bg="#27272a", fg="#38bdf8", insertbackground="white", width=14)
         self.entry_hotkey_ocr.pack(side="left", padx=4)
         self.entry_hotkey_ocr.insert(0, self.config.get("hotkey_ocr", "tab+space"))
-        tk.Label(f_ocr, text="(Tavsiye: tab+space)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
+        tk.Label(f_ocr, text="(Tavsiye: tab+space - Donuk kare yakalar)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
 
         # Hızlı seçim butonları (Presets)
         f_presets = tk.Frame(hotkey_section, bg="#18181b")
-        f_presets.pack(fill="x", pady=(1, 4))
-        tk.Label(f_presets, text="Hızlı Seçim:", font=("Segoe UI", 7), fg="#71717a", bg="#18181b", width=18, anchor="w").pack(side="left")
+        f_presets.pack(fill="x", pady=(1, 3))
+        tk.Label(f_presets, text="Hızlı OCR Tuşu:", font=("Segoe UI", 7), fg="#71717a", bg="#18181b", width=22, anchor="w").pack(side="left")
         presets = [("Tab + Boşluk", "tab+space"), ("Alt + X", "alt+x"), ("Ctrl + Boşluk", "ctrl+space")]
         for preset_name, preset_val in presets:
             btn_preset = tk.Button(
@@ -235,29 +349,44 @@ class SettingsWindow:
         # 5b. Hover Aç/Kapa Kısayolu
         f_hov_hot = tk.Frame(hotkey_section, bg="#18181b")
         f_hov_hot.pack(fill="x", pady=1)
-        tk.Label(f_hov_hot, text="Hover Modu Aç/Kapa:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=18, anchor="w").pack(side="left")
+        tk.Label(f_hov_hot, text="Hover Modunu Aç/Kapa:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=22, anchor="w").pack(side="left")
         self.entry_hotkey_hover = tk.Entry(f_hov_hot, font=("Segoe UI", 8), bg="#27272a", fg="#fafafa", insertbackground="white", width=14)
         self.entry_hotkey_hover.pack(side="left", padx=4)
         self.entry_hotkey_hover.insert(0, self.config.get("hotkey_hover", "alt+v"))
-        tk.Label(f_hov_hot, text="(Örn: alt+v)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
+        tk.Label(f_hov_hot, text="(Örn: alt+v - Özelliği açar/kapatır)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
 
         # 5c. Çubuğu Gizle / Göster
         f_overlay = tk.Frame(hotkey_section, bg="#18181b")
         f_overlay.pack(fill="x", pady=1)
-        tk.Label(f_overlay, text="Çubuğu Gizle/Göster:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=18, anchor="w").pack(side="left")
+        tk.Label(f_overlay, text="Ana Çubuğu Gizle/Göster:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=22, anchor="w").pack(side="left")
         self.entry_hotkey_overlay = tk.Entry(f_overlay, font=("Segoe UI", 8), bg="#27272a", fg="#fafafa", insertbackground="white", width=14)
         self.entry_hotkey_overlay.pack(side="left", padx=4)
         self.entry_hotkey_overlay.insert(0, self.config.get("hotkey_overlay", "alt+h"))
         tk.Label(f_overlay, text="(Örn: alt+h, f2)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
 
-        # 5d. Pano Metnini Çevir
+        # 5d. Seçili Metni / Panoyu Çevir (Kısayol)
         f_clip = tk.Frame(hotkey_section, bg="#18181b")
         f_clip.pack(fill="x", pady=1)
-        tk.Label(f_clip, text="Panoyu Çevir:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=18, anchor="w").pack(side="left")
+        tk.Label(f_clip, text="Seçili Metni / Panoyu Çevir:", font=("Segoe UI", 8), fg="#d4d4d8", bg="#18181b", width=22, anchor="w").pack(side="left")
         self.entry_hotkey_clip = tk.Entry(f_clip, font=("Segoe UI", 8), bg="#27272a", fg="#fafafa", insertbackground="white", width=14)
         self.entry_hotkey_clip.pack(side="left", padx=4)
         self.entry_hotkey_clip.insert(0, self.config.get("hotkey_clipboard", "alt+c"))
-        tk.Label(f_clip, text="(Örn: alt+c)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
+        tk.Label(f_clip, text="(Örn: alt+c - Seçili kelimeyi veya panodakini çevirir)", font=("Segoe UI", 7), fg="#71717a", bg="#18181b").pack(side="left", padx=4)
+
+        # Netleştirici bilgi kutusu
+        f_clip_info = tk.Frame(hotkey_section, bg="#27272a", padx=8, pady=4)
+        f_clip_info.pack(fill="x", pady=(3, 2))
+        tk.Label(
+            f_clip_info,
+            text="💡 Kısayol Bilgisi:\n"
+                 "• Alt+C: Ekranda farenizle seçtiğiniz herhangi bir kelimeyi (veya panodaki metni) anında kopyalar ve çevirir.\n"
+                 "• Ctrl+C: Windows'ta herhangi bir metni kopyaladığınızda otomatik çeviri paneli açılır.",
+            font=("Segoe UI", 7),
+            fg="#38bdf8",
+            bg="#27272a",
+            justify="left",
+            wraplength=480
+        ).pack(anchor="w")
 
         # 5e. OCR Motor Ayarları ve Canlı Test
         ocr_section = tk.LabelFrame(
@@ -462,18 +591,15 @@ class SettingsWindow:
             anchor="w"
         ).pack(side="left")
 
-        self.var_gemini_model = tk.StringVar(value=self.config.get("gemini_model", "gemini-1.5-flash"))
-        model_choices = [
-            "gemini-1.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash-8b"
-        ]
+        from app.gemini_service import SUPPORTED_MODELS
+        self.var_gemini_model = tk.StringVar(value=self.config.get("gemini_model", "gemini-3.1-flash-lite"))
+        model_choices = [m[0] for m in SUPPORTED_MODELS]
         self.cb_model_choice = ttk.Combobox(
             f_model,
             textvariable=self.var_gemini_model,
             values=model_choices,
             state="readonly",
-            width=20,
+            width=22,
             font=("Segoe UI", 8)
         )
         self.cb_model_choice.pack(side="left", padx=4)
@@ -498,7 +624,7 @@ class SettingsWindow:
         ).pack(fill="x", pady=(3, 2))
 
         # Sihirbaz Butonu
-        btn_wizard = tk.Button(
+        self.btn_wizard = tk.Button(
             main_frame,
             text="🚀 Başlangıç Rehberini & Kısayol Sihirbazını Aç",
             font=("Segoe UI", 9, "bold"),
@@ -512,22 +638,7 @@ class SettingsWindow:
             cursor="hand2",
             command=self._launch_wizard
         )
-        btn_wizard.pack(side="bottom", fill="x", pady=(6, 4))
-
-        # Kaydet Butonu
-        btn_save = tk.Button(
-            main_frame,
-            text="💾 Ayarları Kaydet",
-            font=("Segoe UI", 10, "bold"),
-            bg="#6366f1",
-            fg="#ffffff",
-            relief="flat",
-            padx=14,
-            pady=5,
-            cursor="hand2",
-            command=self._save
-        )
-        btn_save.pack(side="bottom", fill="x", pady=(8, 0))
+        self.btn_wizard.pack(fill="x", pady=(4, 2))
 
     def _set_ocr_preset(self, preset_value: str):
         self.entry_hotkey_ocr.delete(0, tk.END)
@@ -582,7 +693,7 @@ class SettingsWindow:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _save(self):
+    def _save(self, is_reset: bool = False, close_window: bool = False):
         hotkey_ocr = self.entry_hotkey_ocr.get().strip().lower()
         hotkey_hover = self.entry_hotkey_hover.get().strip().lower()
         hotkey_overlay = self.entry_hotkey_overlay.get().strip().lower()
@@ -597,10 +708,20 @@ class SettingsWindow:
         ]
         for name, key_str in fields:
             if not key_str:
+                if hasattr(self, "lbl_save_status"):
+                    self.lbl_save_status.configure(
+                        text=f"⚠️ '{name}' kısayolu boş bırakılamaz.",
+                        fg="#ef4444"
+                    )
                 messagebox.showerror("Hata", f"'{name}' kısayolu boş bırakılamaz.", parent=self.window)
                 return
             valid, err = validate_hotkey_string(key_str)
             if not valid:
+                if hasattr(self, "lbl_save_status"):
+                    self.lbl_save_status.configure(
+                        text=f"⚠️ '{name}' için geçersiz kısayol tuşu!",
+                        fg="#ef4444"
+                    )
                 messagebox.showerror(
                     "Geçersiz Kısayol",
                     f"'{name}' için geçersiz kısayol tuşu!\n{err}\n\nÖrnek tuşlar: tab, space, alt, ctrl, shift, f1-f12, a-z, 0-9",
@@ -614,12 +735,13 @@ class SettingsWindow:
         self.config["auto_hide_seconds"] = self.var_duration.get()
         self.config["gemini_api_key"] = self.entry_api.get().strip()
         self.config["use_gemini_direct"] = self.var_use_gemini_direct.get()
-        self.config["gemini_model"] = self.var_gemini_model.get().strip() or "gemini-1.5-flash"
+        self.config["gemini_model"] = self.var_gemini_model.get().strip() or "gemini-3.1-flash-lite"
 
         # Hover Ayarları
         self.config["hover_enabled"] = self.var_hover_enabled.get()
         self.config["hover_trigger_mode"] = self.var_hover_trigger.get()
         self.config["hover_delay_ms"] = self.var_hover_delay.get()
+        self.config["hover_auto_hide_seconds"] = self.var_hover_duration.get()
 
         # Kısayollar
         self.config["hotkey_ocr"] = hotkey_ocr
@@ -642,8 +764,142 @@ class SettingsWindow:
 
         save_config(self.config)
         self.on_settings_changed(self.config)
-        messagebox.showinfo("Başarılı", "Ayarlar başarıyla kaydedildi.", parent=self.window)
-        self.window.destroy()
+
+        # Durum bildirimi ve görsel geri bildirim
+        time_str = datetime.now().strftime("%H:%M:%S")
+        if is_reset:
+            if hasattr(self, "lbl_save_status"):
+                self.lbl_save_status.configure(
+                    text=f"🔄 Ayarlar varsayılana sıfırlandı ve anında uygulandı! ({time_str})",
+                    fg="#f59e0b"
+                )
+            messagebox.showinfo(
+                "Sıfırlandı",
+                "Tüm ayarlar başarıyla varsayılan fabrika değerlerine sıfırlandı ve uygulandı.",
+                parent=self.window
+            )
+        else:
+            if hasattr(self, "lbl_save_status"):
+                self.lbl_save_status.configure(
+                    text=f"✅ Ayarlar başarıyla kaydedildi ve tüm sisteme uygulandı! ({time_str})",
+                    fg="#10b981"
+                )
+            if hasattr(self, "btn_save") and self.window.winfo_exists():
+                self.btn_save.configure(text="✅ Kaydedildi ve Uygulandı!", bg="#059669")
+                try:
+                    if hasattr(self, "_restore_timer_id") and self._restore_timer_id:
+                        self.window.after_cancel(self._restore_timer_id)
+                    self._restore_timer_id = self.window.after(3000, self._restore_save_button)
+                except Exception:
+                    pass
+            messagebox.showinfo(
+                "Başarılı",
+                "Ayarlar başarıyla kaydedildi ve tüm sisteme anında uygulandı.\n\nYeni ayarlarınız hemen geçerlidir.",
+                parent=self.window
+            )
+
+        if close_window:
+            self.close()
+
+    def close(self):
+        """Pencereyi kapatır ve bekleyen zamanlayıcıları iptal eder."""
+        if hasattr(self, "_restore_timer_id") and self._restore_timer_id:
+            try:
+                self.window.after_cancel(self._restore_timer_id)
+            except Exception:
+                pass
+            self._restore_timer_id = None
+        try:
+            self.window.destroy()
+        except Exception:
+            pass
+
+    def _on_destroy(self, event):
+        """Pencere yok edildiğinde bekleyen zamanlayıcıları iptal eder."""
+        if getattr(event, "widget", None) == self.window:
+            if hasattr(self, "_restore_timer_id") and self._restore_timer_id:
+                try:
+                    self.window.after_cancel(self._restore_timer_id)
+                except Exception:
+                    pass
+                self._restore_timer_id = None
+
+    def _restore_save_button(self):
+        self._restore_timer_id = None
+        try:
+            if hasattr(self, "btn_save") and self.window.winfo_exists():
+                self.btn_save.configure(text="💾 Ayarları Kaydet ve Uygula", bg="#4f46e5")
+        except Exception:
+            pass
+
+    def _reset_to_defaults(self):
+        """Tüm ayarları DEFAULT_CONFIG değerlerine döndürür ve kullanıcıdan onay alır."""
+        confirm = messagebox.askyesno(
+            "Ayarları Sıfırla",
+            "Tüm ayarları varsayılan fabrika değerlerine sıfırlamak istediğinize emin misiniz?\n\n"
+            "• Kısayollar: Tab+Space (OCR), Alt+H (Çubuk), Alt+C (Seçili Metin / Pano), Alt+V (Hover Aç/Kapa)\n"
+            "• Otomatik Çeviri: Ctrl+C ile kopyalama ve Fare Yan Tuşu ile Canlı Okuma\n"
+            "• Canlı Hover: Açık, Fare Yan Tuşu (Mouse 4/5), 300 ms, 5 sn\n"
+            "• OCR ve Yapay Zeka tercihleri varsayılana dönecektir.\n\n"
+            "Sıfırlamayı onaylıyor musunuz?",
+            parent=self.window
+        )
+        if not confirm:
+            return
+
+        # 1. Pano Dinleme, Otomatik Başlatma, Her Zaman Üstte, Süre
+        self.var_clipboard.set(DEFAULT_CONFIG.get("clipboard_auto_lookup", True))
+        self.var_startup.set(False)
+        self.var_topmost.set(DEFAULT_CONFIG.get("always_on_top", True))
+        self.var_duration.set(DEFAULT_CONFIG.get("auto_hide_seconds", 12))
+
+        # 2. Canlı Hover
+        self.var_hover_enabled.set(DEFAULT_CONFIG.get("hover_enabled", True))
+        self.var_hover_trigger.set(DEFAULT_CONFIG.get("hover_trigger_mode", "mouse_side"))
+        self.var_hover_delay.set(DEFAULT_CONFIG.get("hover_delay_ms", 300))
+        self.var_hover_duration.set(DEFAULT_CONFIG.get("hover_auto_hide_seconds", 5))
+
+        # 3. Kısayollar
+        self.entry_hotkey_ocr.delete(0, tk.END)
+        self.entry_hotkey_ocr.insert(0, DEFAULT_CONFIG.get("hotkey_ocr", "tab+space"))
+
+        self.entry_hotkey_hover.delete(0, tk.END)
+        self.entry_hotkey_hover.insert(0, DEFAULT_CONFIG.get("hotkey_hover", "alt+v"))
+
+        self.entry_hotkey_overlay.delete(0, tk.END)
+        self.entry_hotkey_overlay.insert(0, DEFAULT_CONFIG.get("hotkey_overlay", "alt+h"))
+
+        self.entry_hotkey_clip.delete(0, tk.END)
+        self.entry_hotkey_clip.insert(0, DEFAULT_CONFIG.get("hotkey_clipboard", "alt+c"))
+
+        # 4. OCR
+        if hasattr(self, "var_ocr_pref"):
+            self.var_ocr_pref.set(DEFAULT_CONFIG.get("ocr_engine_preference", "auto"))
+        if hasattr(self, "entry_tess_cmd"):
+            self.entry_tess_cmd.delete(0, tk.END)
+            self.entry_tess_cmd.insert(0, DEFAULT_CONFIG.get("tesseract_cmd", ""))
+        if hasattr(self, "lbl_ocr_status"):
+            self.lbl_ocr_status.configure(
+                text="OCR durumunu test etmek için butona tıklayın.",
+                fg="#71717a"
+            )
+
+        # 5. Gemini API
+        if hasattr(self, "entry_api"):
+            self.entry_api.delete(0, tk.END)
+            self.entry_api.insert(0, DEFAULT_CONFIG.get("gemini_api_key", ""))
+        if hasattr(self, "var_use_gemini_direct"):
+            self.var_use_gemini_direct.set(DEFAULT_CONFIG.get("use_gemini_direct", False))
+        if hasattr(self, "var_gemini_model"):
+            self.var_gemini_model.set(DEFAULT_CONFIG.get("gemini_model", "gemini-3.1-flash-lite"))
+        if hasattr(self, "lbl_api_status"):
+            self.lbl_api_status.configure(
+                text="⚪ API anahtarı girilmedi (Temel çeviri motoru aktif)",
+                fg="#71717a"
+            )
+
+        # Sıfırlanan ayarları anında kaydet ve sisteme uygula
+        self._save(is_reset=True, close_window=False)
 
     def _browse_tesseract(self):
         filename = filedialog.askopenfilename(

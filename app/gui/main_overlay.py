@@ -16,7 +16,7 @@ from app.gui.hover_tooltip import HoverTooltip
 from app.gui.onboarding_wizard import OnboardingWizard
 from app.hover_tracker import HoverTracker
 from app.hotkey_manager import HotkeyManager, format_hotkey
-from app.clipboard_watcher import get_clipboard_text
+from app.clipboard_watcher import get_clipboard_text, copy_selected_text_windows
 
 
 class MainOverlay:
@@ -66,7 +66,11 @@ class MainOverlay:
         self.snipper = ScreenSnipper(self.root, self.ocr, self.lookup_text)
 
         # Canlı Hover Tooltip ve Takipçisi (İş parçacığı güvenli sarmalayıcılar ile)
-        self.hover_tooltip = HoverTooltip(self.root, db=self.db)
+        self.hover_tooltip = HoverTooltip(
+            self.root,
+            db=self.db,
+            auto_hide_seconds=self.config.get("hover_auto_hide_seconds", 5)
+        )
 
         def _safe_hover_show(word_data, x, y):
             try:
@@ -77,6 +81,12 @@ class MainOverlay:
 
         def _safe_hover_hide():
             try:
+                # Yan tuş ve orta tuş modlarında fare hareketi kutucuğu kapatmaz.
+                # Otomatik kapanma süresi (hover_auto_hide_seconds) veya kullanıcı [✕] ile kapatır.
+                if hasattr(self, "hover_tracker") and self.hover_tracker.trigger_mode in ("mouse_side", "mouse_middle"):
+                    return
+                if hasattr(self, "hover_tooltip") and (self.hover_tooltip.has_active_auto_hide() or self.hover_tooltip.auto_hide_seconds == 0):
+                    return
                 if self.root.winfo_exists():
                     self.root.after(0, lambda: self.hover_tooltip.hide())
             except Exception:
@@ -353,11 +363,53 @@ class MainOverlay:
             self.lookup_text(text)
             self.search_entry.select_range(0, tk.END)
 
+    def _safe_after(self, ms: int, func: Callable, *args):
+        """Thread-safe UI zamanlayıcı/çağırıcı."""
+        try:
+            if threading.current_thread() is threading.main_thread():
+                if self.root.winfo_exists():
+                    self.root.after(ms, func, *args)
+                else:
+                    func(*args)
+            else:
+                # Arka plan iş parçacığından çağrılıyorsa doğrudan çalıştır
+                func(*args)
+        except Exception:
+            try:
+                func(*args)
+            except Exception:
+                pass
+
     def _lookup_from_clipboard(self):
-        """Alt+C basıldığında panodaki güncel metni çevirir."""
-        txt = get_clipboard_text()
-        if txt and txt.strip():
-            self.lookup_text(txt.strip())
+        """
+        Alt+C basıldığında ekrandaki seçili metni kopyalar veya panodaki güncel metni çevirir.
+        Kullanıcı bir kelimeyi fareyle seçip Alt+C'ye bastığında otomatik kopyalar ve çevirir.
+        Eğer hem seçim hem de pano boşsa kullanıcıya bilgilendirici bir uyarı kartı gösterir.
+        """
+        def _worker():
+            # 1. Önce aktif pencerede kullanıcının seçili tuttuğu metni kopyalamayı dene
+            txt = copy_selected_text_windows(timeout_ms=100)
+            if not txt or not txt.strip():
+                # Kopyalama yeni bir metin getirmediyse mevcut panoya bak
+                txt = get_clipboard_text()
+
+            if txt and txt.strip():
+                clean_text = txt.strip()
+                if self.clipboard_watcher:
+                    self.clipboard_watcher._last_text = clean_text
+                self._safe_after(0, lambda: self.lookup_text(clean_text))
+            else:
+                # Pano ve seçim boşsa kullanıcıya net görsel geri bildirim ver
+                empty_msg = {
+                    "error": "Panoda veya ekranda çevrilecek bir Almanca metin bulunamadı.\n\n"
+                             "💡 İpucu: Çevirmek istediğiniz kelimeyi fareyle seçip Alt+C'ye basabilir "
+                             "veya doğrudan Ctrl+C ile kopyalayabilirsiniz."
+                }
+                self._safe_after(0, lambda: self._show_hud(empty_msg))
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        return t
 
     def _toggle_bar_visibility(self):
         """Alt+H veya gizle butonuna basıldığında çubuğu gizler / gösterir."""
@@ -397,16 +449,18 @@ class MainOverlay:
     def lookup_text(self, text: str):
         """Metni çevirir ve HUD kartında gösterir."""
         if not text or not text.strip():
-            return
+            return None
 
         def _worker():
             try:
                 res = self.translator.translate_and_analyze(text)
-                self.root.after(0, lambda: self._show_hud(res))
+                self._safe_after(0, lambda: self._show_hud(res))
             except Exception as e:
                 print(f"Çeviri hatası: {e}")
 
-        threading.Thread(target=_worker, daemon=True).start()
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        return t
 
     def _show_hud(self, result_data: dict):
         ResultHUD.show_result(
@@ -487,6 +541,10 @@ class MainOverlay:
             text="👁️ Hover: AÇIK" if hover_on else "👁️ Hover: KAPALI",
             bg="#8b5cf6" if hover_on else "#52525b"
         )
+        if hasattr(self, "hover_tooltip"):
+            self.hover_tooltip.set_auto_hide_seconds(
+                self.config.get("hover_auto_hide_seconds", 5)
+            )
 
         # Kısayol buton metnini ve tuş kayıtlarını güncelle
         hotkey_ocr_label = format_hotkey(self.config.get("hotkey_ocr", "tab+space"))

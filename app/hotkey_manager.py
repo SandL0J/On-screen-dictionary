@@ -3,7 +3,9 @@ Windows Genel Kısayol Tuşu Yöneticisi (Global Hotkey Manager)
 Düşük Seviyeli Klavye Kancası (Low-Level Keyboard Hook - WH_KEYBOARD_LL) ile:
 - Tab+Space (Tab ve Boşluk ile anında video/ekran OCR seçici)
 - Alt+H (Yüzen mini çubuğu gizle/göster)
-- Alt+C (Panodaki kelimeyi hemen çevir)
+- Alt+V (Canlı hover modunu aç/kapat)
+- Alt+C (Panodaki kelimeyi manuel tekrar çevir)
+- Ctrl+C (Windows panosu kopyalama otomatik algılama - ClipboardWatcher ile)
 - Ctrl+Space, Alt+X, F2 veya kullanıcının tanımladığı herhangi bir tuş kombinasyonunu
 tüm video oynatıcılarda (YouTube, Netflix, VLC) ve arka planda çalışan uygulamalarda
 gecikme yapmadan ve normal yazmayı engellemeden sorunsuz yakalar.
@@ -495,6 +497,11 @@ class HotkeyManager:
 
         try:
             p_kbd = ctypes.cast(lParam, PKBDLLHOOKSTRUCT).contents
+
+            # Kendi simüle ettiğimiz kopyalama tuşlarını (Ctrl+C) doğrudan geçir
+            if p_kbd.dwExtraInfo == 0x535A4C51:
+                return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
             vk = p_kbd.vkCode
             is_down = wParam in (WM_KEYDOWN, WM_SYSKEYDOWN)
             is_up = wParam in (WM_KEYUP, WM_SYSKEYUP)

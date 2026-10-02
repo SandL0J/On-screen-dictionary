@@ -353,7 +353,7 @@ class HoverTracker:
                 # Anında farenin altındaki kelimeyi tara
                 threading.Thread(
                     target=self._inspect_hover_area,
-                    args=(cx, cy),
+                    args=(cx, cy, False),
                     daemon=True
                 ).start()
 
@@ -365,7 +365,10 @@ class HoverTracker:
                     return 1
 
             elif wParam == WM_MOUSEMOVE:
-                if self._active_word_screen_rect:
+                if self.trigger_mode in ("mouse_side", "mouse_middle"):
+                    # Yan tuş ve orta tuş tetikleme modunda fare hareketi kutucuğu kapatmaz
+                    pass
+                elif self._active_word_screen_rect:
                     p_ms = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                     cx, cy = int(p_ms.pt.x), int(p_ms.pt.y)
                     rx1, ry1, rx2, ry2 = self._active_word_screen_rect
@@ -433,7 +436,7 @@ class HoverTracker:
             if xbtn_now and not last_xbtn_down:
                 print(f"[Ekran Sozlugu] Yan tus algilandi (GetAsyncKeyState)! Konum: ({curr_x}, {curr_y})")
                 self._trigger_loading_feedback(curr_x, curr_y)
-                threading.Thread(target=self._inspect_hover_area, args=(curr_x, curr_y), daemon=True).start()
+                threading.Thread(target=self._inspect_hover_area, args=(curr_x, curr_y, False), daemon=True).start()
             last_xbtn_down = xbtn_now
 
             # 2. Pasif Hover (Sadece fareyi bekletme modu)
@@ -459,7 +462,9 @@ class HoverTracker:
                 self._hover_start_time = now
                 self._scanned_this_pause = False
 
-                if self._active_word_screen_rect:
+                if self.trigger_mode in ("mouse_side", "mouse_middle"):
+                    pass
+                elif self._active_word_screen_rect:
                     rx1, ry1, rx2, ry2 = self._active_word_screen_rect
                     if not (rx1 - 35 <= curr_x <= rx2 + 35 and ry1 - 25 <= curr_y <= ry2 + 25):
                         self._reset_state()
@@ -469,15 +474,15 @@ class HoverTracker:
                 if not self._scanned_this_pause and (now - self._hover_start_time) >= self.hover_delay_sec:
                     self._scanned_this_pause = True
                     self._trigger_loading_feedback(curr_x, curr_y)
-                    self._inspect_hover_area(curr_x, curr_y)
+                    self._inspect_hover_area(curr_x, curr_y, is_passive_hover=True)
 
     def trigger_at_current_cursor(self):
         """Manuel olarak mevcut imleç konumundaki kelimeyi tarar."""
         cx, cy = get_current_cursor_pos()
         self._trigger_loading_feedback(cx, cy)
-        self._inspect_hover_area(cx, cy)
+        self._inspect_hover_area(cx, cy, is_passive_hover=False)
 
-    def _inspect_hover_area(self, cursor_x: int, cursor_y: int):
+    def _inspect_hover_area(self, cursor_x: int, cursor_y: int, is_passive_hover: bool = False):
         """İmleç etrafındaki mikro bölgeyi yakalar ve OCR ile farenin altındaki kelimeyi arar."""
         half_w = self.crop_width // 2
         half_h = self.crop_height // 2
@@ -568,7 +573,10 @@ class HoverTracker:
                 screen_y2 = screen_y1 + target_box["h"]
 
                 self._active_word = cleaned_word
-                self._active_word_screen_rect = (screen_x1, screen_y1, screen_x2, screen_y2)
+                if is_passive_hover and self.trigger_mode not in ("mouse_side", "mouse_middle"):
+                    self._active_word_screen_rect = (screen_x1, screen_y1, screen_x2, screen_y2)
+                else:
+                    self._active_word_screen_rect = None
 
                 try:
                     result_data = self.translator.translate_and_analyze(cleaned_word)

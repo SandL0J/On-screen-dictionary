@@ -10,24 +10,38 @@ import re
 from typing import Callable, Optional
 
 # Win32 API Tanımları
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+try:
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    IS_WINDOWS = True
+except (AttributeError, OSError):
+    user32 = None
+    kernel32 = None
+    IS_WINDOWS = False
 
-user32.OpenClipboard.argtypes = [ctypes.c_void_p]
-user32.OpenClipboard.restype = ctypes.c_bool
-user32.CloseClipboard.restype = ctypes.c_bool
-user32.GetClipboardData.argtypes = [ctypes.c_uint]
-user32.GetClipboardData.restype = ctypes.c_void_p
-kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalLock.restype = ctypes.c_void_p
-kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-kernel32.GlobalUnlock.restype = ctypes.c_bool
+if IS_WINDOWS and user32 and kernel32:
+    user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+    user32.OpenClipboard.restype = ctypes.c_bool
+    user32.CloseClipboard.restype = ctypes.c_bool
+    user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    user32.GetClipboardData.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalUnlock.restype = ctypes.c_bool
 
 CF_UNICODETEXT = 13
+SYNTHETIC_EXTRA_INFO = 0x535A4C51  # 'SZLQ' - Klavye kancasının (hook) ayırt etmesi için özel işaretçi
+KEYEVENTF_KEYUP = 0x0002
+VK_CONTROL = 0x11
+VK_MENU = 0x12
+VK_C = 0x43
 
 
 def get_clipboard_text() -> Optional[str]:
     """Sistem panosundaki UTF-16 metni güvenli bir şekilde çeker."""
+    if not IS_WINDOWS or not user32 or not kernel32:
+        return None
     if not user32.OpenClipboard(None):
         return None
     try:
@@ -44,6 +58,45 @@ def get_clipboard_text() -> Optional[str]:
         return None
     finally:
         user32.CloseClipboard()
+
+
+def copy_selected_text_windows(timeout_ms: int = 100) -> Optional[str]:
+    """
+    Windows üzerinde aktif penceredeki seçili metni panoya kopyalamak için
+    Ctrl+C tuş kombinasyonunu simüle eder ve güncel pano metnini döner.
+
+    1. Kullanıcı Alt tuşunu basılı tutuyorsa (ör. Alt+C basarken),
+       önce Alt tuşunu geçici olarak serbest bırakır.
+    2. Ardından Ctrl+C simülasyonunu çalıştırır.
+    3. Panonun hedef uygulama tarafından doldurulması için bekler.
+    4. Kopyalanan güncel metni döner.
+    """
+    if not IS_WINDOWS or not user32:
+        return None
+
+    try:
+        # 1. Alt tuşunu geçici olarak serbest bırak (kullanıcının parmağı halen Alt'ta olabilir)
+        user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, SYNTHETIC_EXTRA_INFO)
+        time.sleep(0.015)
+
+        # 2. Ctrl+C tuş kombinasyonunu gönder
+        user32.keybd_event(VK_CONTROL, 0, 0, SYNTHETIC_EXTRA_INFO)
+        user32.keybd_event(VK_C, 0, 0, SYNTHETIC_EXTRA_INFO)
+        time.sleep(0.015)
+        user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, SYNTHETIC_EXTRA_INFO)
+        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, SYNTHETIC_EXTRA_INFO)
+
+        # 3. Panonun hedef uygulama tarafından doldurulmasını bekle
+        wait_steps = max(1, timeout_ms // 20)
+        for _ in range(wait_steps):
+            time.sleep(0.02)
+            txt = get_clipboard_text()
+            if txt and txt.strip():
+                return txt.strip()
+        return get_clipboard_text()
+    except Exception as e:
+        print(f"Seçili metin kopyalama simülasyonu hatası: {e}")
+        return None
 
 
 class ClipboardWatcher:

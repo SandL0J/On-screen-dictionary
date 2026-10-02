@@ -15,16 +15,17 @@ from typing import Tuple, Optional, Dict, Any
 
 
 SUPPORTED_MODELS = [
-    ("gemini-1.5-flash", "Gemini 1.5 Flash (Önerilen - Hızlı & Düşük Token)"),
-    ("gemini-2.0-flash", "Gemini 2.0 Flash (Yeni Nesil Hızlı Model)"),
-    ("gemini-1.5-flash-8b", "Gemini 1.5 Flash-8B (Ultra Düşük Tüketim - 8B)"),
+    ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite (Önerilen - Hızlı & Kararlı)"),
+    ("gemini-3.8-flash", "Gemini 3.8 Flash (Yeni Nesil Model)"),
+    ("gemini-flash-latest", "Gemini Flash Latest (En Güncel Flash)"),
+    ("gemini-1.5-flash", "Gemini 1.5 Flash (Eski Model)"),
 ]
 
 
 class GeminiService:
-    def __init__(self, api_key: str = "", model: str = "gemini-1.5-flash"):
+    def __init__(self, api_key: str = "", model: str = "gemini-3.1-flash-lite"):
         self.api_key = api_key.strip() if api_key else ""
-        self.model = model.strip() if model else "gemini-1.5-flash"
+        self.model = model.strip() if model else "gemini-3.1-flash-lite"
 
     def set_api_key(self, api_key: str):
         self.api_key = api_key.strip() if api_key else ""
@@ -35,6 +36,69 @@ class GeminiService:
 
     def is_configured(self) -> bool:
         return bool(self.api_key and len(self.api_key) > 10)
+
+    def _call_gemini_api(self, prompt: str, is_json: bool = False, max_tokens: int = 1000) -> Optional[str]:
+        """
+        Gemini REST API'sine istek gönderir.
+        Kullanıcının modeli (404 veya 503 gibi) hata verirse bilinen aktif Flash modellerine otomatik yedekleme yapar.
+        """
+        if not self.is_configured():
+            return None
+
+        preferred = self.model if self.model else "gemini-3.1-flash-lite"
+        candidates = [preferred]
+        for m in ("gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"):
+            if m not in candidates:
+                candidates.append(m)
+
+        payload_dict = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": max_tokens
+            }
+        }
+        if is_json:
+            payload_dict["generationConfig"]["responseMimeType"] = "application/json"
+
+        payload = json.dumps(payload_dict).encode("utf-8")
+
+        for model_name in candidates:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": "ScreenLingo-Assistant/1.0"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    candidates_resp = data.get("candidates", [])
+                    if candidates_resp:
+                        parts = candidates_resp[0].get("content", {}).get("parts", [])
+                        if parts:
+                            text_out = parts[0].get("text", "").strip()
+                            if text_out:
+                                if self.model != model_name and model_name in ("gemini-3.1-flash-lite", "gemini-3.8-flash"):
+                                    self.model = model_name
+                                return text_out
+            except urllib.error.HTTPError as e:
+                # 404 (model kaldırılmış) veya 503 (servis yoğun) durumunda bir sonraki aktif modeli dene
+                if e.code in (404, 503, 500):
+                    continue
+                else:
+                    print(f"Gemini API HTTP {e.code} hatası ({model_name}): {e}")
+                    break
+            except Exception:
+                continue
+
+        return None
 
     def test_connection(self, key_to_test: Optional[str] = None) -> Tuple[bool, str]:
         """
@@ -101,67 +165,39 @@ class GeminiService:
             "Sen uzman bir Almanca-Türkçe sözlük ve çeviri asistanısın.\n"
             "GÖREV: Aşağıdaki Almanca metni veya kelimeyi mutlaka TÜRKÇEYE çevir ve dilbilgisi analizi yap.\n"
             "ÖNEMLİ KURAL: 'turkish' alanı KESİNLİKLE metnin Türkçe çevirisi olmalıdır. Asla Almanca veya boş bırakılamaz!\n"
-            "YALNIZCA aşağıdaki JSON şemasında tek bir JSON objesi döndür:\n"
+            "YALNIZCA geçerli ve hatasız tek bir JSON objesi döndür:\n"
             "{\n"
-            '  "german": "Almanca orijinal kelime veya cümle (İsim ise mutlaka artikeliyle örn: \'das Buch\')",\n'
-            '  "turkish": "Metnin TÜRKÇE çevirisi / anlamı (Kesinlikle Türkçe olmalı)",\n'
-            '  "article": "der" | "die" | "das" | "",\n'
-            '  "plural": "Almanca çoğul hali (örn: \'die Bücher\') veya \'\'",\n'
-            '  "pos": "isim" | "fiil" | "sıfat" | "cümle" | "deyim",\n'
-            '  "is_sentence": true/false,\n'
+            '  "german": "Almanca orijinal kelime veya cümle (örn: das Buch)",\n'
+            '  "turkish": "Metnin TÜRKÇE çevirisi / anlamı (örn: kitap)",\n'
+            '  "article": "der veya die veya das ya da boş",\n'
+            '  "plural": "Almanca çoğul hali veya boş",\n'
+            '  "pos": "isim, fiil, sıfat veya cümle",\n'
+            '  "is_sentence": false,\n'
             '  "rule_note": "Varsa 1-2 cümlelik pratik dilbilgisi veya artikel kuralı",\n'
-            '  "examples": [{"de": "Kısa Almanca örnek", "tr": "Türkçe çevirisi"}]\n'
+            '  "examples": [{"de": "Ich lese ein Buch.", "tr": "Bir kitap okuyorum."}]\n'
             "}\n"
             f'Almanca Metin: "{clean}"'
         )
 
-        model_name = self.model if self.model else "gemini-1.5-flash"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
-
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-                "temperature": 0.1,
-                "maxOutputTokens": 350
-            }
-        }
-
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json",
-                    "User-Agent": "ScreenLingo-Assistant/1.0"
-                },
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        raw_json = parts[0].get("text", "").strip()
-                        # Markdown ```json bloklarını temizle
-                        if raw_json.startswith("```"):
-                            lines = raw_json.splitlines()
-                            if lines[0].startswith("```"):
-                                lines = lines[1:]
-                            if lines and lines[-1].startswith("```"):
-                                lines = lines[:-1]
-                            raw_json = "\n".join(lines).strip()
-
-                        parsed = json.loads(raw_json)
-                        return self._format_gemini_translation(parsed, clean, model_name)
-        except Exception as e:
-            print(f"[Gemini Direct Error ({model_name})]: {e}")
+        raw_json = self._call_gemini_api(prompt, is_json=True, max_tokens=1000)
+        if not raw_json:
             return None
 
-        return None
+        try:
+            # Markdown ```json bloklarını temizle
+            if raw_json.startswith("```"):
+                lines = raw_json.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                raw_json = "\n".join(lines).strip()
+
+            parsed = json.loads(raw_json)
+            return self._format_gemini_translation(parsed, clean, self.model)
+        except Exception as e:
+            print(f"[Gemini Direct JSON Parse Hatası]: {e}")
+            return None
 
     def _format_gemini_translation(self, parsed: dict, original_text: str, model_name: str) -> Optional[Dict[str, Any]]:
         """Gemini JSON çıktısını standart sözlük/çeviri formatına dönüştürür."""
@@ -241,32 +277,4 @@ class GeminiService:
             f"Lütfen en fazla 2-3 cümleyle, varsa artikel kuralı, fiil çekimi veya günlük kullanım ipucu ver."
         )
 
-        model_name = self.model if self.model else "gemini-1.5-flash"
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "maxOutputTokens": 150,
-                "temperature": 0.3
-            }
-        }
-
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return parts[0].get("text", "").strip()
-        except Exception as e:
-            print(f"Gemini API açıklama hatası: {e}")
-        return None
+        return self._call_gemini_api(prompt, is_json=False, max_tokens=500)

@@ -199,16 +199,17 @@ class OnboardingWizard:
 
         # Öne çıkan özellikler listesi
         features = [
-            ("✂️ Anında Ekran Kırpma", "Tab+Space kısayoluyla ekrandaki altyazıyı kutu içine alın, video donmadan çevrilsin."),
-            ("👁️ Canlı Fare Üzerine Gelme (Hover)", "Farenizi kelimenin üzerine getirin veya yan tuşa tıklayın, mini çeviri balonu açılsın."),
+            ("📋 Otomatik Pano Çevirisi (Ctrl+C)", "Metin seçip Ctrl+C yaptığınız anda arka plan dinleyicisi algılar ve anında çevirir."),
+            ("🖱️ Fare Yan Tuşu ile Canlı Okuma", "Farenizi altyazıdaki kelimenin üzerine götürüp yan tuşa (Mouse 4/5) tıklayın, mini balon açılsın."),
+            ("✂️ Donuk Kare Ekran Kırpma (Tab+Space)", "Hızlı geçen altyazıları o karede dondurup kutu içine alarak kusursuz OCR ile çevirin."),
             ("🎨 Renkli Artikel ve Çoğul Desteği", "der (Mavi), die (Kırmızı), das (Yeşil) ile artikel hafızanızı güçlendirin."),
-            ("📚 Kişisel Kelime Defteri & Flashcards", "Beğendiğiniz kelimeleri ⭐ ile deftere ekleyin, Anki'ye aktarın veya kartlarla tekrar edin."),
+            ("📚 Kişisel Kelime Defteri & Flashcards", "Beğendiğiniz kelimeleri ⭐ ile deftere ekleyin, SM-2 aralıklı tekrar kartlarıyla çalışın."),
             ("📴 %100 Çevrimdışı Çalışabilme", "İnternet veya harici API olmasa bile dahili sözlük ve dilbilgisi kuralları hazırdır.")
         ]
 
         for icon_title, text_detail in features:
-            f_item = tk.Frame(self.content_frame, bg="#27272a", padx=12, pady=8)
-            f_item.pack(fill="x", pady=4)
+            f_item = tk.Frame(self.content_frame, bg="#27272a", padx=12, pady=6)
+            f_item.pack(fill="x", pady=3)
             tk.Label(f_item, text=icon_title, font=("Segoe UI", 9, "bold"), fg="#fafafa", bg="#27272a").pack(anchor="w")
             tk.Label(f_item, text=text_detail, font=("Segoe UI", 8), fg="#a1a1aa", bg="#27272a", wraplength=530, justify="left").pack(anchor="w", pady=(2, 0))
 
@@ -222,7 +223,7 @@ class OnboardingWizard:
             font=("Segoe UI", 12, "bold"),
             fg="#38bdf8",
             bg="#18181b"
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(anchor="w", pady=(0, 4))
 
         tk.Label(
             self.content_frame,
@@ -230,7 +231,7 @@ class OnboardingWizard:
             font=("Segoe UI", 9),
             fg="#a1a1aa",
             bg="#18181b"
-        ).pack(anchor="w", pady=(0, 10))
+        ).pack(anchor="w", pady=(0, 8))
 
         hotkey_ocr = format_hotkey(self.config.get("hotkey_ocr", "tab+space"))
         hotkey_hover = format_hotkey(self.config.get("hotkey_hover", "alt+v"))
@@ -238,22 +239,24 @@ class OnboardingWizard:
         hotkey_clip = format_hotkey(self.config.get("hotkey_clipboard", "alt+c"))
 
         cards = [
-            (f"✂️ {hotkey_ocr}", "Anında Ekran Kırpıcı (OCR)", "Ekranda altyazı veya metin gördüğünüzde basın. Karartmalı ekranda kelimeyi seçin.", "#0284c7"),
-            (f"👁️ Fare Yan Tuşu veya {hotkey_hover}", "Canlı Hover Çevirisi", "Farenizi kelimenin üzerine götürüp yan tuşa (Mouse 4/5) tıklayın. Anında balon açılır.", "#8b5cf6"),
-            (f"📋 {hotkey_clip}", "Panodaki Metni Çevir", "Herhangi bir uygulamada metin kopyaladığınızda bu kısayolla hemen çevirin.", "#10b981"),
-            (f"📌 {hotkey_overlay}", "Ana Çubuğu Gizle / Göster", "Üstteki mini çubuğu ekrandan geçici olarak gizlemek veya geri getirmek için basın.", "#f59e0b")
+            ("📋 Ctrl + C", "Otomatik Pano Çevirisi", "İnternette veya herhangi bir uygulamada metin seçip Ctrl+C ile kopyaladığınız anda çeviri kartı otomatik açılır.", "#10b981"),
+            ("🖱️ Fare Yan Tuşu (Mouse 4/5)", "Canlı Hover Çevirisi", "Farenizi ekrandaki kelimenin üzerine götürüp yan tuşa basın. Anında nokta atışı çeviri balonu açılır.", "#8b5cf6"),
+            (f"✂️ {hotkey_ocr}", "Ekran Dondurucu ve Kırpıcı (OCR)", "Kopyalanamayan altyazılarda basın. Ekran o karede dondurulur; kelimeyi kutu içine alarak çevirin.", "#0284c7"),
+            (f"👁️ {hotkey_hover}", "Hover Modunu Aç / Kapa", "Canlı fare okuma özelliğini klavyeden anında açmak veya geçici olarak kapatmak için kullanılır.", "#a855f7"),
+            (f"📌 {hotkey_overlay}", "Ana Çubuğu Gizle / Göster", "Ekranın üstündeki yüzen mini kontrol çubuğunu gizlemek veya geri getirmek için basın.", "#f59e0b"),
+            (f"📋 {hotkey_clip}", "Seçili Metni / Panoyu Çevir", "Ekranda seçtiğiniz kelimeyi veya panodaki metni klavyeden anında kopyalayıp çevirmek için basın.", "#14b8a6")
         ]
 
         for key_label, title, desc, color in cards:
-            c_box = tk.Frame(self.content_frame, bg="#27272a", padx=12, pady=8, highlightthickness=1, highlightbackground=color)
-            c_box.pack(fill="x", pady=4)
+            c_box = tk.Frame(self.content_frame, bg="#27272a", padx=10, pady=5, highlightthickness=1, highlightbackground=color)
+            c_box.pack(fill="x", pady=3)
 
             top = tk.Frame(c_box, bg="#27272a")
             top.pack(fill="x")
-            tk.Label(top, text=key_label, font=("Segoe UI", 10, "bold"), fg=color, bg="#27272a").pack(side="left")
-            tk.Label(top, text=f"— {title}", font=("Segoe UI", 9, "bold"), fg="#fafafa", bg="#27272a").pack(side="left", padx=6)
+            tk.Label(top, text=key_label, font=("Segoe UI", 9, "bold"), fg=color, bg="#27272a").pack(side="left")
+            tk.Label(top, text=f"— {title}", font=("Segoe UI", 8, "bold"), fg="#fafafa", bg="#27272a").pack(side="left", padx=6)
 
-            tk.Label(c_box, text=desc, font=("Segoe UI", 8), fg="#a1a1aa", bg="#27272a", wraplength=520, justify="left").pack(anchor="w", pady=(3, 0))
+            tk.Label(c_box, text=desc, font=("Segoe UI", 8), fg="#a1a1aa", bg="#27272a", wraplength=520, justify="left").pack(anchor="w", pady=(2, 0))
 
         tk.Label(
             self.content_frame,
@@ -261,7 +264,7 @@ class OnboardingWizard:
             font=("Segoe UI", 8, "italic"),
             fg="#71717a",
             bg="#18181b"
-        ).pack(anchor="w", pady=(8, 0))
+        ).pack(anchor="w", pady=(6, 0))
 
     # =========================================================================
     # ADIM 3: SİSTEM & OCR UYUMLULUK KONTROLÜ

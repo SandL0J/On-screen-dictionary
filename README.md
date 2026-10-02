@@ -77,12 +77,12 @@ Uygulama arka plandayken veya tam ekran bir video/oyun açıkken dahi kısayolla
 
 | Kısayol | Fonksiyon | Açıklama |
 | :--- | :--- | :--- |
-| **`Tab + Space`** | **Ekran Kırp / OCR** | Ekranı o karede dondurur ve altyazıyı seçip çevirmenizi sağlar. |
-| **`Fare Yan Tuşları`** | **Nokta Atışı Hover OCR** | Fare altındaki kelimeyi anında okur ve üzerinde mini kart açar. |
-| **`Alt + V`** | **Hover Modu Aç/Kapa** | Canlı fare hover modunu hızlıca açıp kapatır. |
+| **`Ctrl + C`** | **Otomatik Pano Çevirisi** | Herhangi bir uygulamada metin seçip kopyaladığınız anda çeviri kartı otomatik açılır. |
+| **`Fare Yan Tuşları`** | **Nokta Atışı Hover OCR** | Farenin altındaki kelimeyi okur ve üzerinde mini çeviri balonu açar (Mouse 4/5). |
+| **`Tab + Space`** | **Ekran Kırp / OCR** | Ekranı o karede dondurur ve altyazıyı çerçeve içine alıp çevirmenizi sağlar. |
+| **`Alt + V`** | **Hover Modu Aç/Kapa** | Canlı fare okuma özelliğini klavyeden anında açıp kapatır. |
 | **`Alt + H`** | **Çubuğu Gizle / Göster** | Yüzen kontrol çubuğunu gizler veya geri getirir. |
-| **`Alt + C`** | **Panoyu Çevir** | Kopyalanan en son metni hemen çeviri kartında açar. |
-| **`Ctrl + C`** | **Pano Kopyalama** | Kopyalanan metinleri otomatik algılar (Ayarlardan kapatılabilir). |
+| **`Alt + C`** | **Seçili Metni / Panoyu Çevir** | Ekranda seçtiğiniz kelimeyi veya panodaki metni klavyeden anında kopyalayıp çevirir. |
 
 > ⚙️ **Kısayolları Özelleştirme:** Çubuktaki **`⚙` (Ayarlar)** butonuna tıklayarak kısayolları dilediğiniz tuş kombinasyonuyla (`tab+space`, `alt+x`, `ctrl+space`, `f2` vb.) değiştirebilirsiniz.
 

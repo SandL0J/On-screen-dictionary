@@ -55,8 +55,9 @@ class TranslationEngine:
         cached = self.db.get_cache(clean)
         if cached:
             tr_val = (cached.get("turkish") or cached.get("translation") or "").strip()
-            # Önbellekteki Türkçe çeviri metnin orijinaliyle aynı değilse kullan
-            if tr_val and tr_val.lower() != clean.lower():
+            invalid_terms = ("çeviri bulunamadı", "çeviri alınamadı", "error", "hata")
+            # Önbellekteki Türkçe çeviri geçerli bir çeviriyse ve hata mesajı değilse kullan
+            if tr_val and tr_val.lower() != clean.lower() and not any(term in tr_val.lower() for term in invalid_terms):
                 self.db.add_history(clean, cached)
                 cached["from_cache"] = True
                 return cached
@@ -107,22 +108,36 @@ class TranslationEngine:
             except Exception:
                 pass
 
-        # 6. Sonucu önbelleğe ve geçmişe kaydet
+        # 6. Sonucu önbelleğe ve geçmişe kaydet (Yalnızca geçerli çeviriler)
         if result and "error" not in result:
-            self.db.set_cache(clean, result)
-            self.db.add_history(clean, result)
+            tr_res = (result.get("turkish") or result.get("translation") or "").strip().lower()
+            invalid_terms = ("çeviri bulunamadı", "çeviri alınamadı", "error", "hata")
+            if tr_res and not any(term in tr_res for term in invalid_terms):
+                self.db.set_cache(clean, result)
+                self.db.add_history(clean, result)
 
         return result
 
     def _translate_sentence(self, text: str) -> Dict[str, Any]:
-        """Cümleyi Google Translate üzerinden Türkçeye çevirir ve dilbilgisi kurallarını ekler."""
+        """Cümleyi Google Translate (veya Gemini AI yedeği) üzerinden Türkçeye çevirir ve dilbilgisi kurallarını ekler."""
         is_offline = False
+        turkish_meaning = ""
         try:
             gt_data = self._translate_via_gt(text, sl="auto", tl="tr")
             turkish_meaning = gt_data["translated_text"]
-        except Exception as e:
-            turkish_meaning = "Çeviri alınamadı (İnternet bağlantısı yok veya servis meşgul)"
-            is_offline = True
+        except Exception:
+            # Google Translate başarısız olursa Gemini AI yedek olarak devreye girsin
+            if self.gemini_service.is_configured():
+                try:
+                    g_res = self.gemini_service.translate_and_analyze(text)
+                    if g_res and g_res.get("turkish"):
+                        turkish_meaning = g_res["turkish"]
+                except Exception:
+                    pass
+
+            if not turkish_meaning:
+                turkish_meaning = "Çeviri alınamadı (İnternet bağlantısı yok veya servis meşgul)"
+                is_offline = True
 
         grammar_notes = analyze_sentence_grammar(text)
         return {
@@ -138,38 +153,55 @@ class TranslationEngine:
         }
 
     def _translate_via_gt(self, text: str, sl: str = "auto", tl: str = "tr") -> Dict[str, Any]:
-        """Google Translate gtx API üzerinden hızlı çeviri ve sözlük bilgisi çeker."""
-        url = (
-            f"https://translate.googleapis.com/translate_a/single?"
-            f"client=gtx&sl={sl}&tl={tl}&dt=t&dt=bd&dt=rm&q={urllib.parse.quote(text)}"
-        )
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        )
-        with urllib.request.urlopen(req, timeout=6) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        """
+        Google Translate API üzerinden çoklu istemci desteğiyle (dict-chrome-ex, gtx, t)
+        hızlı ve kesintisiz çeviri ve sözlük bilgisi çeker. 429 engellemelerine karşı dayanıklıdır.
+        """
+        clients = ["dict-chrome-ex", "gtx", "t"]
+        last_error = None
 
-        # Cümle veya ana çeviri
-        translated_text = "".join([item[0] for item in data[0] if item[0]])
-        detected_lang = data[2] if len(data) > 2 and data[2] else (sl if sl != "auto" else "de")
+        for client in clients:
+            try:
+                url = (
+                    f"https://translate.googleapis.com/translate_a/single?"
+                    f"client={client}&sl={sl}&tl={tl}&dt=t&dt=bd&dt=rm&q={urllib.parse.quote(text)}"
+                )
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept": "*/*",
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
 
-        # Detaylı sözlük karşılıkları (kelime ise)
-        dict_entries = []
-        if len(data) > 1 and data[1]:
-            for pos in data[1]:
-                pos_name = pos[0]
-                meanings = pos[1]
-                dict_entries.append({
-                    "pos": self._map_pos_to_turkish(pos_name),
-                    "meanings": meanings[:6]
-                })
+                # Cümle veya ana çeviri
+                translated_text = "".join([item[0] for item in data[0] if item and item[0]])
+                detected_lang = data[2] if len(data) > 2 and data[2] else (sl if sl != "auto" else "de")
 
-        return {
-            "translated_text": translated_text,
-            "detected_lang": detected_lang,
-            "dict_entries": dict_entries
-        }
+                # Detaylı sözlük karşılıkları (kelime ise)
+                dict_entries = []
+                if len(data) > 1 and data[1]:
+                    for pos in data[1]:
+                        pos_name = pos[0]
+                        meanings = pos[1]
+                        dict_entries.append({
+                            "pos": self._map_pos_to_turkish(pos_name),
+                            "meanings": meanings[:6]
+                        })
+
+                if translated_text:
+                    return {
+                        "translated_text": translated_text,
+                        "detected_lang": detected_lang,
+                        "dict_entries": dict_entries
+                    }
+            except Exception as e:
+                last_error = e
+                continue
+
+        raise last_error or Exception("Tüm çeviri istemcileri yanıt vermedi.")
 
     def _fetch_wiktionary_info(self, word: str) -> Dict[str, str]:
         """Almanca Wiktionary üzerinden artikel ve çoğul bilgisini ayrıştırır."""
@@ -237,7 +269,7 @@ class TranslationEngine:
                 gt_data = self._translate_via_gt(base_word, sl="de", tl="tr")
             turkish_meaning = gt_data["translated_text"]
             dict_entries = gt_data["dict_entries"]
-        except Exception as e:
+        except Exception:
             turkish_meaning = ""
             dict_entries = []
 
@@ -246,6 +278,23 @@ class TranslationEngine:
         article = given_art or wiki_info["article"]
         plural = wiki_info["plural"]
         pos = wiki_info["pos"]
+
+        # Google Translate başarısız olduysa ve Gemini yapılandırılmışsa Gemini AI ile dene
+        if not turkish_meaning and self.gemini_service.is_configured():
+            try:
+                g_res = self.gemini_service.translate_and_analyze(base_word)
+                if g_res and g_res.get("turkish"):
+                    turkish_meaning = g_res["turkish"]
+                    if not article and g_res.get("article"):
+                        article = g_res["article"]
+                    if not plural and g_res.get("plural"):
+                        plural = g_res["plural"]
+                    if not pos and g_res.get("pos"):
+                        pos = g_res["pos"]
+                    if not dict_entries and g_res.get("dict_entries"):
+                        dict_entries = g_res["dict_entries"]
+            except Exception:
+                pass
 
         # Eğer Wiktionary bulamadıysa, son ek kuralıyla artikel tahmin et
         rule_explanation = ""
