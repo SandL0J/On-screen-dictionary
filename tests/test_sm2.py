@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, date
 
-from app.database import Database
+from app.database import Database, calculate_sm2
 
 
 class TestSM2SpacedRepetition(unittest.TestCase):
@@ -266,6 +266,25 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         self.assertIn(w1, due_ids, "Bugunku kelime vadesi gelenlerde yer almalidir")
         self.assertIn(null_word_id, due_ids, "next_review_date NULL olan kelime vadesi gelenlerde yer almalidir")
         self.assertNotIn(w2, due_ids, "Gelecek tarihli kelime vadesi gelenlerde yer almamalidir")
+
+    def test_calculate_sm2_quality_clamping(self):
+        """calculate_sm2 fonksiyonunun quality=0 ve quality=9 gibi aralik disi degerleri 1-5 araligina kirptigini dogrular."""
+        today = date(2026, 10, 2)
+        # quality=0 verilince 1'e kirpilmali (quality < 3 basarisiz tekrar: reps=0, interval=1, ef degismez)
+        reps_0, interval_0, ef_0, next_0 = calculate_sm2(quality=0, repetitions=3, interval_days=15, ease_factor=2.5, today=today)
+        reps_1, interval_1, ef_1, next_1 = calculate_sm2(quality=1, repetitions=3, interval_days=15, ease_factor=2.5, today=today)
+        self.assertEqual(reps_0, 0)
+        self.assertEqual(interval_0, 1)
+        self.assertEqual(ef_0, 2.5)
+        self.assertEqual((reps_0, interval_0, ef_0, next_0), (reps_1, interval_1, ef_1, next_1))
+
+        # quality=9 verilince 5'e kirpilmali (quality=5 mukemmel tekrar: reps=1, interval=1, ef=2.60)
+        reps_9, interval_9, ef_9, next_9 = calculate_sm2(quality=9, repetitions=0, interval_days=0, ease_factor=2.5, today=today)
+        reps_5, interval_5, ef_5, next_5 = calculate_sm2(quality=5, repetitions=0, interval_days=0, ease_factor=2.5, today=today)
+        self.assertEqual(reps_9, 1)
+        self.assertEqual(interval_9, 1)
+        self.assertEqual(ef_9, 2.60)
+        self.assertEqual((reps_9, interval_9, ef_9, next_9), (reps_5, interval_5, ef_5, next_5))
 
 
 if __name__ == "__main__":

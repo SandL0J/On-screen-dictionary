@@ -5,14 +5,58 @@ Kelime Defteri (Wordbook), Geçmiş (History) ve Çevrimdışı Önbellek (Cache
 import sqlite3
 import json
 import csv
+from contextlib import contextmanager
 from datetime import datetime, timedelta, date
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 
 DB_PATH = Path(__file__).resolve().parent.parent / "ekran_sozlugu.db"
 
 
-from contextlib import contextmanager
+def calculate_sm2(quality: int, repetitions: int, interval_days: int, ease_factor: float,
+                  today: Optional[Union[str, date, datetime]] = None) -> Tuple[int, int, float, str]:
+    """
+    SuperMemo 2 (SM-2) Aralikli Tekrar Algoritmasi hesaplayicisi.
+
+    Donus:
+        (new_repetitions, new_interval_days, new_ease_factor, next_review_date_str)
+    """
+    quality = min(5, max(1, quality))
+    if today is None:
+        current_date = datetime.now().date()
+    elif isinstance(today, str):
+        current_date = datetime.strptime(today, "%Y-%m-%d").date()
+    elif isinstance(today, datetime):
+        current_date = today.date()
+    else:
+        current_date = today
+
+    if quality < 3:
+        # Basarisiz hatirlama: tekrarlar sifirlanir, aralik 1 gune iner, ease_factor DEGISMEZ
+        new_reps = 0
+        new_interval = 1
+        new_ef = ease_factor
+    else:
+        # Basarili hatirlama (quality >= 3)
+        if repetitions == 0:
+            new_interval = 1
+        elif repetitions == 1:
+            new_interval = 6
+        else:
+            new_interval = max(1, int(round(interval_days * ease_factor)))
+
+        new_reps = repetitions + 1
+
+        # EF guncelleme formulu: EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+        ef_delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
+        new_ef = round(ease_factor + ef_delta, 2)
+        if new_ef < 1.3:
+            new_ef = 1.3
+
+    next_date = current_date + timedelta(days=new_interval)
+    next_date_str = next_date.strftime("%Y-%m-%d")
+    return new_reps, new_interval, new_ef, next_date_str
+
 
 class Database:
     def __init__(self, db_path: Optional[Path] = None):
@@ -343,41 +387,14 @@ class Database:
             interval = int(row_dict.get("interval_days") if row_dict.get("interval_days") is not None else 0)
             reps = int(row_dict.get("repetitions") if row_dict.get("repetitions") is not None else 0)
 
-            # Tarih belirleme
-            if review_date is None:
-                current_date = datetime.now().date()
-            elif isinstance(review_date, str):
-                current_date = datetime.strptime(review_date, "%Y-%m-%d").date()
-            elif isinstance(review_date, datetime):
-                current_date = review_date.date()
-            else:
-                current_date = review_date
+            new_reps, new_interval, new_ef, next_date_str = calculate_sm2(
+                quality=quality,
+                repetitions=reps,
+                interval_days=interval,
+                ease_factor=ef,
+                today=review_date
+            )
 
-            # SM-2 Mantığı:
-            if quality < 3:
-                # Başarısız hatırlama: tekrarlar sıfırlanır, aralık 1 güne iner, ease_factor DEĞİŞMEZ
-                new_reps = 0
-                new_interval = 1
-                new_ef = ef
-            else:
-                # Başarılı hatırlama (quality >= 3)
-                if reps == 0:
-                    new_interval = 1
-                elif reps == 1:
-                    new_interval = 6
-                else:
-                    new_interval = max(1, int(round(interval * ef)))
-
-                new_reps = reps + 1
-
-                # EF güncelleme formülü: EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-                ef_delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
-                new_ef = round(ef + ef_delta, 2)
-                if new_ef < 1.3:
-                    new_ef = 1.3
-
-            next_date = current_date + timedelta(days=new_interval)
-            next_date_str = next_date.strftime("%Y-%m-%d")
             last_reviewed_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
             cursor.execute("""
