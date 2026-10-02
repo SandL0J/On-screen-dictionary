@@ -140,8 +140,8 @@ class TestHoverFeature(unittest.TestCase):
 
         tracker.stop()
 
-    def test_hover_tracker_unconditional_xbutton(self):
-        """enabled=False olsa bile fare yan tuşuna basıldığında tetikleme çalışmalıdır."""
+    def test_hover_tracker_disabled_releases_xbutton(self):
+        """Hover kapalıyken (enabled=False) fare yan tuşları taranmamalı, tüketilmemeli ve sisteme serbest bırakılmalıdır."""
         from app.hover_tracker import WM_XBUTTONDOWN, MSLLHOOKSTRUCT, POINT
         on_loading = MagicMock()
         tracker = HoverTracker(
@@ -151,7 +151,7 @@ class TestHoverFeature(unittest.TestCase):
             on_hover_leave=MagicMock(),
             on_loading=on_loading,
             trigger_mode="mouse_side",
-            enabled=False,  # Pasif bekleme KAPALI
+            enabled=False,  # Hover KAPALI
             consume_xbutton=True
         )
         tracker._running = True
@@ -159,6 +159,16 @@ class TestHoverFeature(unittest.TestCase):
         ms = MSLLHOOKSTRUCT()
         ms.pt = POINT(250, 350)
 
+        with patch.object(tracker, "_inspect_hover_area") as mock_inspect:
+            import ctypes
+            res = tracker._mouse_hook_callback(0, WM_XBUTTONDOWN, ctypes.addressof(ms))
+            # 1 dönmemeli (tüketilmemeli / serbest bırakılmalı), CallNextHookEx sonucu dönmeli (0 veya hook zinciri)
+            self.assertNotEqual(res, 1)
+            on_loading.assert_not_called()
+            mock_inspect.assert_not_called()
+
+        # Hover açıldığında ise tuş yakalanmalı ve 1 dönmelidir
+        tracker.set_enabled(True)
         with patch.object(tracker, "_inspect_hover_area") as mock_inspect:
             import ctypes
             res = tracker._mouse_hook_callback(0, WM_XBUTTONDOWN, ctypes.addressof(ms))
@@ -313,10 +323,22 @@ class TestHoverFeature(unittest.TestCase):
 
         self.assertIn("KAPALI", overlay.btn_hover.cget("text"))
 
-        # Butona tıklama / Toggle
+        # Butona tıklama / Toggle Aç
         overlay._toggle_hover()
         self.assertTrue(overlay.hover_tracker.is_enabled())
         self.assertIn("AÇIK", overlay.btn_hover.cget("text"))
+
+        # Tooltip gösterildiğinde
+        overlay.hover_tooltip.show({"original": "Auto", "translation": "Araba"}, 100, 100)
+        self.root.update_idletasks()
+        self.assertTrue(overlay.hover_tooltip.is_visible())
+
+        # Tekrar tıklayıp kapattığımızda tooltip derhal gizlenmeli ve takipçi devre dışı kalmalıdır
+        overlay._toggle_hover()
+        self.assertFalse(overlay.hover_tracker.is_enabled())
+        self.assertIn("KAPALI", overlay.btn_hover.cget("text"))
+        self.root.update_idletasks()
+        self.assertFalse(overlay.hover_tooltip.is_visible())
 
         overlay.stop()
 

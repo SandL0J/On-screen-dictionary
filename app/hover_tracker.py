@@ -328,8 +328,11 @@ class HoverTracker:
 
     def _mouse_hook_callback(self, nCode: int, wParam: int, lParam: int) -> int:
         """Windows Düşük Seviyeli Fare Kancası (WH_MOUSE_LL) geri çağırma fonksiyonu."""
-        if nCode < 0 or not lParam or not self._running:
-            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+        # Hover modu kapalıysa (Alt+V veya butonla kapatıldığında) fare yan tuşlarını tarayıcıya/sisteme serbest bırak
+        if nCode < 0 or not lParam or not self._running or not self.enabled:
+            if IS_WINDOWS and user32:
+                return user32.CallNextHookEx(None, nCode, wParam, lParam)
+            return 0
 
         try:
             # Fare Yan Tuşuna (XBUTTON1 / XBUTTON2 - Mouse 4/5) veya Orta Tuşa (MBUTTON) basıldı
@@ -380,7 +383,9 @@ class HoverTracker:
         except Exception as e:
             print(f"Fare kancası hatası: {e}")
 
-        return user32.CallNextHookEx(None, nCode, wParam, lParam)
+        if IS_WINDOWS and user32:
+            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+        return 0
 
     def _run_hook_loop(self):
         """Kanca iş parçacığı mesaj döngüsü."""
@@ -424,6 +429,11 @@ class HoverTracker:
 
         while self._running:
             time.sleep(check_interval)
+
+            # Hover modu kapalıysa GetAsyncKeyState kontrollerini ve bekleme taramasını çalıştırma
+            if not self.enabled:
+                last_xbtn_down = False
+                continue
 
             curr_x, curr_y = get_current_cursor_pos()
             now = time.time()

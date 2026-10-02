@@ -81,6 +81,11 @@ class MainOverlay:
 
         def _safe_hover_hide():
             try:
+                # Hover modu kapatıldıysa kutucuğu kesinlikle gizle
+                if hasattr(self, "hover_tracker") and not self.hover_tracker.is_enabled():
+                    if hasattr(self, "hover_tooltip"):
+                        self.hover_tooltip.hide()
+                    return
                 # Yan tuş ve orta tuş modlarında fare hareketi kutucuğu kapatmaz.
                 # Otomatik kapanma süresi (hover_auto_hide_seconds) veya kullanıcı [✕] ile kapatır.
                 if hasattr(self, "hover_tracker") and self.hover_tracker.trigger_mode in ("mouse_side", "mouse_middle"):
@@ -493,6 +498,8 @@ class MainOverlay:
             text="👁️ Hover: AÇIK" if new_state else "👁️ Hover: KAPALI",
             bg="#8b5cf6" if new_state else "#52525b"
         )
+        if not new_state and hasattr(self, "hover_tooltip"):
+            self.hover_tooltip.hide()
 
     def _open_wordbook(self):
         WordbookWindow(self.root, self.db)
@@ -545,6 +552,8 @@ class MainOverlay:
             self.hover_tooltip.set_auto_hide_seconds(
                 self.config.get("hover_auto_hide_seconds", 5)
             )
+            if not hover_on:
+                self.hover_tooltip.hide()
 
         # Kısayol buton metnini ve tuş kayıtlarını güncelle
         hotkey_ocr_label = format_hotkey(self.config.get("hotkey_ocr", "tab+space"))

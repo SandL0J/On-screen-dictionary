@@ -1666,4 +1666,32 @@ Kullanıcının karşılaştığı durumun teknik nedenleri incelendiğinde 3 te
 ---
 
 ## 4. Git Durumu
-- Hafta içi kuralına tam uyuldu: Commit atılmadı, `git push` yapılmadı.
+- Tüm değişiklikler yerel commit (`2893f51`) yapıldı ve `git push` ile GitHub'a yüklendi.
+
+---
+
+# Fare Yan Tuşlarının (Mouse 4/5) Hover Kapalıyken Sisteme / Tarayıcıya Serbest Bırakılması
+
+**Zaman Damgası:** 2026-10-03 02:08:00 (UTC+3)
+
+## 1. Kullanıcı Talebi ve Sorunun Kök Nedeni
+Kullanıcı `Alt+V` kısayoluyla veya ana çubuktaki `👁️ Hover` butonuna tıklayarak Hover modunu kapattığında, fare yan tuşlarının (Mouse 4 / Mouse 5 / XBUTTON1 / XBUTTON2) kelime algılamayı bırakıp web tarayıcısında (Chrome, Edge vb.) "Geri" ve "İleri" gitmek için serbest kalmasını talep etti.
+
+**Tespit Edilen Kök Neden:**
+- `app/hover_tracker.py` içindeki `_mouse_hook_callback` fonksiyonunda yalnızca `self._running` kontrolü yapılıyordu; `self.enabled` kontrolü yapılmıyordu.
+- Bu nedenle kullanıcı Hover modunu kapatsa bile fare kancası yan tuş tıklamasını yakalıyor, `return 1` dönerek olayı tüketiyor (swallow/consume) ve kelime taraması başlatıyordu. Tarayıcı veya Windows ise yan tuş olayını hiç alamıyordu.
+- Benzer şekilde `_run_timer_loop` içindeki `GetAsyncKeyState` döngüsü de `self.enabled` kapalıyken çalışmaya devam ediyordu.
+
+## 2. Yapılan Geliştirmeler
+1. **`app/hover_tracker.py`**:
+   - `_mouse_hook_callback` fonksiyonunun en başına `or not self.enabled` kontrolü eklendi. Hover modu kapalı olduğunda kanca hiçbir işlem yapmaz, `return 1` dönmez, OCR tetiklemez ve olayı derhal `CallNextHookEx` ile Windows'a ve tarayıcıya iletir.
+   - `_run_timer_loop` döngüsünün başına `if not self.enabled: last_xbtn_down = False; continue` koruması eklenerek arka planda gereksiz `GetAsyncKeyState` yoklamaları ve OCR tetiklemeleri engellendi.
+2. **`app/gui/main_overlay.py`**:
+   - `_toggle_hover` ve `_apply_settings` metotlarında hover kapatıldığında ekranda açık kalan `hover_tooltip` kutucuğunun derhal gizlenmesi sağlandı.
+   - `_safe_hover_hide` içinde `not self.hover_tracker.is_enabled()` durumu için acil gizleme güvencesi eklendi.
+3. **`tests/test_hover_feature.py`**:
+   - `test_hover_tracker_disabled_releases_xbutton`: Hover kapalıyken (`enabled=False`) yan tuşa basıldığında kancanın 1 dönmediği (tuşu serbest bıraktığı), `on_loading` ve OCR taraması çağırmadığı; hover açıldığında ise tuşu yakalayıp 1 döndüğü birim testiyle doğrulandı.
+   - `test_main_overlay_hover_integration`: Hover kapatıldığında arayüz butonunun güncellendiği ve ekrandaki kutucuğun anında gizlendiği doğrulandı.
+
+## 3. Test Sonuçları
+- 138 birim testin 138'i başarıyla geçti (`Ran 138 tests in 10.475s - OK`).
