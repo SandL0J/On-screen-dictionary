@@ -396,16 +396,82 @@ class Database:
             updated_row = cursor.fetchone()
             return dict(updated_row) if updated_row else None
 
-    def get_due_words(self, target_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Tekrar zamanı gelmiş (next_review_date <= target_date) kelimeleri döner."""
+    # Ortak vade SQL kosulu (get_due_words ve get_review_statistics tarafindan paylasilir)
+    DUE_WORDS_CONDITION = "(next_review_date <= ? OR next_review_date IS NULL)"
+
+    @classmethod
+    def get_due_condition_sql(cls) -> str:
+        """Vadesi gelmis kelimeler icin ortak SQL WHERE kosulunu doner."""
+        return cls.DUE_WORDS_CONDITION
+
+    def get_due_words(self, target_date: Optional[str] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Tekrar zamani gelmis (next_review_date <= target_date VEYA next_review_date IS NULL) kelimeleri doner."""
         if not target_date:
             target_date = datetime.now().strftime("%Y-%m-%d")
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
+            query = f"""
                 SELECT * FROM wordbook
-                WHERE next_review_date IS NOT NULL AND next_review_date <= ?
+                WHERE {self.get_due_condition_sql()}
                 ORDER BY next_review_date ASC, id ASC
-            """, (target_date,))
+            """
+            params: List[Any] = [target_date]
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            cursor.execute(query, tuple(params))
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
+
+    def get_review_statistics(self, target_date: Optional[str] = None) -> Dict[str, int]:
+        """
+        Kelime defteri aralikli tekrar (SM-2) istatistiklerini doner.
+
+        Donen anahtarlar ve SQL kosullari:
+            - total_words: tum kayitlar (SELECT COUNT(*) FROM wordbook)
+            - due_today: get_due_words ile BIREBIR ayni kosul (next_review_date <= ? OR next_review_date IS NULL)
+            - learned_words: repetitions >= 3 (SELECT COUNT(*) FROM wordbook WHERE repetitions >= 3)
+            - new_words: last_reviewed_at IS NULL (SELECT COUNT(*) FROM wordbook WHERE last_reviewed_at IS NULL)
+            
+            Geriye donuk uyumluluk anahtarlari:
+            - total: total_words ile esdeger
+            - due: due_today ile esdeger
+            - learning: henuz ogrenilenler (repetitions < 3)
+            - reviewed: en az 1 kez incelenenler (last_reviewed_at IS NOT NULL)
+        """
+        if not target_date:
+            target_date = datetime.now().strftime("%Y-%m-%d")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. total_words: tum kayitlar
+            cursor.execute("SELECT COUNT(*) as cnt FROM wordbook")
+            total_words = cursor.fetchone()["cnt"]
+
+            # 2. due_today: get_due_words ile BIREBIR ayni kosul (limitsiz sayim)
+            cursor.execute(f"""
+                SELECT COUNT(*) as cnt FROM wordbook
+                WHERE {self.get_due_condition_sql()}
+            """, (target_date,))
+            due_today = cursor.fetchone()["cnt"]
+
+            # 3. learned_words: repetitions >= 3
+            cursor.execute("SELECT COUNT(*) as cnt FROM wordbook WHERE repetitions >= 3")
+            learned_words = cursor.fetchone()["cnt"]
+
+            # 4. new_words: last_reviewed_at IS NULL
+            cursor.execute("SELECT COUNT(*) as cnt FROM wordbook WHERE last_reviewed_at IS NULL")
+            new_words = cursor.fetchone()["cnt"]
+
+            return {
+                "total_words": total_words,
+                "due_today": due_today,
+                "learned_words": learned_words,
+                "new_words": new_words,
+                # Geriye donuk uyumluluk:
+                "total": total_words,
+                "due": due_today,
+                "learning": total_words - learned_words,
+                "reviewed": total_words - new_words
+            }

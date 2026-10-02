@@ -4,8 +4,9 @@ SuperMemo 2 (SM-2) Aralıklı Tekrar Algoritması ve Veritabanı Entegrasyon Tes
 import unittest
 import tempfile
 import shutil
+import sqlite3
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from app.database import Database
 
@@ -35,7 +36,6 @@ class TestSM2SpacedRepetition(unittest.TestCase):
 
     def test_quality_1_resets_repetitions_interval_ease_unchanged(self):
         """repetitions=3 iken quality=1 verilince repetitions=0, interval=1, ease değişmez."""
-        # 3 başarılı tekrar yapıp repetitions=3 durumuna getirelim
         word_id = self.db.add_word("Lernen", "öğrenmek")
         self.db.update_sm2_review(word_id, quality=4)  # rep: 1, interval: 1, EF: 2.50
         self.db.update_sm2_review(word_id, quality=4)  # rep: 2, interval: 6, EF: 2.50
@@ -45,7 +45,6 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         current_ef = word_rep3["ease_factor"]
         self.assertEqual(current_ef, 2.5)
 
-        # Şimdi başarısız tekrar (quality=1) verelim
         updated = self.db.update_sm2_review(word_id, quality=1)
         self.assertIsNotNone(updated)
         self.assertEqual(updated["repetitions"], 0, "quality < 3 durumunda repetitions sıfırlanmalıdır")
@@ -70,7 +69,6 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         """Aynı kelime tekrar eklenince SM-2 alanları sıfırlanmaz."""
         word_id = self.db.add_word("Apfel", "elma", article="der")
         
-        # Kelimeyi tekrar edelim ve SM-2 değerlerini ilerletelim
         reviewed = self.db.update_sm2_review(word_id, quality=5)
         self.assertIsNotNone(reviewed)
         self.assertAlmostEqual(reviewed["ease_factor"], 2.6, places=2)
@@ -80,11 +78,9 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         expected_next_review = reviewed["next_review_date"]
         expected_last_reviewed = reviewed["last_reviewed_at"]
 
-        # Aynı kelimeyi yeniden ekleyelim (örneğin güncellenmiş Türkçe veya not ile)
         readded_id = self.db.add_word("Apfel", "kırmızı elma", article="der", notes="Önemli meyve")
         self.assertEqual(readded_id, word_id)
 
-        # Veritabanından kelimeyi tekrar çekip SM-2 alanlarının korunduğunu doğrulayalım
         current_word = self.db.get_word_by_id(word_id)
         self.assertEqual(current_word["turkish"], "kırmızı elma", "Türkçe anlam güncellenmiş olmalı")
         self.assertEqual(current_word["notes"], "Önemli meyve", "Notlar güncellenmiş olmalı")
@@ -98,7 +94,6 @@ class TestSM2SpacedRepetition(unittest.TestCase):
     def test_sm2_minimum_ease_factor_boundary(self):
         """Ease factor asla 1.3'ün altına düşmemelidir."""
         word_id = self.db.add_word("Schwierig", "zor")
-        # Sürekli quality=3 vererek EF'yi düşürelim
         for _ in range(15):
             updated = self.db.update_sm2_review(word_id, quality=3)
         self.assertGreaterEqual(updated["ease_factor"], 1.3)
@@ -111,11 +106,8 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         yesterday_str = (today - timedelta(days=1)).strftime("%Y-%m-%d")
         tomorrow_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
-        # Bugün vadesi gelen kelime
         w1_id = self.db.add_word("Heute", "bugün", next_review_date=today_str)
-        # Dünden kalmış vadesi geçmiş kelime
         w2_id = self.db.add_word("Gestern", "dün", next_review_date=yesterday_str)
-        # Yarın vadesi gelecek kelime (bugün listelenmemeli)
         w3_id = self.db.add_word("Morgen", "yarın", next_review_date=tomorrow_str)
 
         due_words = self.db.get_due_words(today_str)
@@ -133,6 +125,149 @@ class TestSM2SpacedRepetition(unittest.TestCase):
         updated = self.db.update_sm2_review(word_id, quality=4)
         self.assertEqual(updated["status"], "reviewed")
 
+    def test_migration_from_old_schema_idempotent(self):
+        """Eski şemadan göç (migration) ve ikinci çalıştırmada hatasız çalışma testi."""
+        old_db_path = Path(self.temp_dir) / "old_schema.db"
+        conn = sqlite3.connect(old_db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE wordbook (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                german TEXT NOT NULL,
+                article TEXT DEFAULT '',
+                plural TEXT DEFAULT '',
+                turkish TEXT NOT NULL,
+                part_of_speech TEXT DEFAULT '',
+                example_de TEXT DEFAULT '',
+                example_tr TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                status TEXT DEFAULT 'learning',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("INSERT INTO wordbook (german, turkish) VALUES ('AlteKatze', 'eski kedi')")
+        conn.commit()
+        conn.close()
+
+        # 1. İlk çalıştırma: Sütun göçü (ALTER TABLE) çalışmalı
+        db1 = Database(old_db_path)
+        word1 = db1.get_word_by_id(1)
+        self.assertIsNotNone(word1)
+        self.assertEqual(word1["ease_factor"], 2.5)
+        self.assertEqual(word1["interval_days"], 0)
+        self.assertEqual(word1["repetitions"], 0)
+
+        # 2. İkinci çalıştırma: Tekrar eden göç hataya (duplicate column name) yol açmamalı
+        db2 = Database(old_db_path)
+        updated = db2.update_sm2_review(1, quality=4)
+        self.assertIsNotNone(updated)
+        self.assertEqual(updated["repetitions"], 1)
+
+    def test_get_review_statistics_four_counters(self):
+        """get_review_statistics yeni anahtar setini (total_words, due_today, learned_words, new_words) doğrulamalıdır."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+
+        # 1. Yeni kelime (last_reviewed_at IS NULL, reps=0, due_today)
+        w1 = self.db.add_word("Neu1", "yeni 1")
+
+        # 2. Yeni kelime ancak ileri bir tarihe ötelenmiş (last_reviewed_at IS NULL, reps=0, due_today DEĞİL)
+        w2 = self.db.add_word("Neu2", "yeni 2", next_review_date="2099-01-01")
+
+        # 3. 3 kez tekrar edilmiş öğrenilmiş kelime (learned_words: reps >= 3, last_reviewed_at NOT NULL)
+        w3 = self.db.add_word("Gelernt", "öğrenilmiş")
+        self.db.update_sm2_review(w3, quality=4)
+        self.db.update_sm2_review(w3, quality=4)
+        self.db.update_sm2_review(w3, quality=4)
+
+        # 4. 1 kez tekrar edilmiş öğrenilmekte olan kelime (reps=1 < 3, last_reviewed_at NOT NULL)
+        w4 = self.db.add_word("Lernen", "öğrenilen")
+        self.db.update_sm2_review(w4, quality=4)
+
+        stats = self.db.get_review_statistics(today_str)
+
+        # İstenen anahtarların varlığı
+        self.assertIn("total_words", stats)
+        self.assertIn("due_today", stats)
+        self.assertIn("learned_words", stats)
+        self.assertIn("new_words", stats)
+
+        # Anahtarların doğruluğu
+        self.assertEqual(stats["total_words"], 4, "total_words tüm kayıtları saymalıdır (4 kelime)")
+        self.assertEqual(stats["new_words"], 2, "new_words last_reviewed_at IS NULL olanları saymalıdır (w1 ve w2)")
+        self.assertEqual(stats["learned_words"], 1, "learned_words repetitions >= 3 olanları saymalıdır (yalnızca w3)")
+
+        due_words = self.db.get_due_words(today_str)
+        self.assertEqual(stats["due_today"], len(due_words), "due_today get_due_words ile aynı koşulda limitsiz sayım yapmalıdır")
+
+        # Geriye dönük uyumluluk anahtarlarının varlığı
+        self.assertIn("total", stats)
+        self.assertIn("due", stats)
+        self.assertIn("learning", stats)
+        self.assertIn("reviewed", stats)
+
+    def test_sm2_ease_factor_clamping_minimum_1_3(self):
+        """Ease factor kalitesi ne kadar düşük olursa olsun 1.3'e clamp edilmelidir."""
+        # Başlangıçta EF 1.35 olan bir kelime ekleyelim
+        word_id = self.db.add_word("ExtremSchwer", "çok zor", ease_factor=1.35)
+        # quality=3 verildiğinde EF delta -0.14 olur (1.35 - 0.14 = 1.21). Clamping ile 1.3 olmalıdır.
+        updated = self.db.update_sm2_review(word_id, quality=3)
+        self.assertEqual(updated["ease_factor"], 1.3, "EF 1.3 altına düşmemeli ve 1.3'e clamp edilmelidir")
+
+    def test_sm2_with_fixed_today_date(self):
+        """Sabit 'today' tarihi verildiğinde sonraki tekrar tarihleri deterministik hesaplanmalıdır."""
+        fixed_day1 = date(2026, 10, 1)
+        word_id = self.db.add_word("FixDatum", "sabit tarih")
+
+        # 1. Tekrar (quality=4): interval=1 gün -> next_review_date = 2026-10-02
+        rev1 = self.db.update_sm2_review(word_id, quality=4, review_date=fixed_day1)
+        self.assertEqual(rev1["repetitions"], 1)
+        self.assertEqual(rev1["interval_days"], 1)
+        self.assertEqual(rev1["next_review_date"], "2026-10-02")
+
+        # 2. Tekrar (quality=4) 2026-10-02 tarihinde: interval=6 gün -> next_review_date = 2026-10-08
+        rev2 = self.db.update_sm2_review(word_id, quality=4, review_date=date(2026, 10, 2))
+        self.assertEqual(rev2["repetitions"], 2)
+        self.assertEqual(rev2["interval_days"], 6)
+        self.assertEqual(rev2["next_review_date"], "2026-10-08")
+
+        # 3. Tekrar (quality=4) 2026-10-08 tarihinde: interval=round(6 * 2.5) = 15 gün -> next_review_date = 2026-10-23
+        rev3 = self.db.update_sm2_review(word_id, quality=4, review_date=date(2026, 10, 8))
+        self.assertEqual(rev3["repetitions"], 3)
+        self.assertEqual(rev3["interval_days"], 15)
+        self.assertEqual(rev3["next_review_date"], "2026-10-23")
+
+    def test_due_today_and_get_due_words_with_null_next_review_date(self):
+        """next_review_date'i NULL olan bir satir ekleyip due_today == len(get_due_words(limit=cok buyuk)) oldugunu dogrular."""
+        # 1. Normal vadesi bugun olan bir kelime
+        w1 = self.db.add_word("Heute", "bugun")
+
+        # 2. Gelecek tarihe otelenmis kelime (vadesi gelmemis)
+        w2 = self.db.add_word("Zukunft", "gelecek", next_review_date="2099-12-31")
+
+        # 3. next_review_date'i acikca NULL olan bir kelime ekleyelim
+        with self.db._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO wordbook (german, turkish, status, next_review_date)
+                VALUES ('OhneDatum', 'tarihsiz', 'learning', NULL)
+            """)
+            conn.commit()
+            null_word_id = cursor.lastrowid
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        stats = self.db.get_review_statistics(today_str)
+        # Cok buyuk limit ile get_due_words cagrisi
+        due_words = self.db.get_due_words(target_date=today_str, limit=100000)
+
+        # due_today == len(get_due_words(limit=cok buyuk)) dogrulamasi
+        self.assertEqual(stats["due_today"], len(due_words))
+
+        due_ids = [w["id"] for w in due_words]
+        self.assertIn(w1, due_ids, "Bugunku kelime vadesi gelenlerde yer almalidir")
+        self.assertIn(null_word_id, due_ids, "next_review_date NULL olan kelime vadesi gelenlerde yer almalidir")
+        self.assertNotIn(w2, due_ids, "Gelecek tarihli kelime vadesi gelenlerde yer almamalidir")
+
 
 if __name__ == "__main__":
     unittest.main()
+
