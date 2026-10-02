@@ -10,7 +10,9 @@ from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Union, Tuple
 
-DB_PATH = Path(__file__).resolve().parent.parent / "ekran_sozlugu.db"
+from app.paths import get_db_path, CODE_DIR
+
+DB_PATH = get_db_path()
 
 
 def calculate_sm2(quality: int, repetitions: int, interval_days: int, ease_factor: float,
@@ -60,7 +62,7 @@ def calculate_sm2(quality: int, repetitions: int, interval_days: int, ease_facto
 
 class Database:
     def __init__(self, db_path: Optional[Path] = None):
-        self.db_path = db_path or DB_PATH
+        self.db_path = db_path or get_db_path()
         self._init_db()
 
     @contextmanager
@@ -74,6 +76,16 @@ class Database:
             conn.close()
 
     def _init_db(self):
+        if isinstance(self.db_path, (str, Path)) and str(self.db_path) != ":memory:":
+            try:
+                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"[Ekran Sözlüğü UYARI] Veritabanı dizini oluşturulamadı ({e}). Kod klasörüne dönülüyor.")
+                self.db_path = CODE_DIR / "ekran_sozlugu.db"
+                try:
+                    Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
         with self._get_connection() as conn:
             cursor = conn.cursor()
             # 1. Kelime Defteri Tablosu

@@ -31,7 +31,9 @@ DEFAULT_CONFIG = {
     "ocr_engine_preference": "auto",
 }
 
-CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"
+from app.paths import get_config_path
+
+CONFIG_FILE = get_config_path()
 
 
 def load_config() -> dict:
@@ -57,10 +59,22 @@ def load_config() -> dict:
 
 def save_config(config: dict) -> bool:
     """Yapılandırmayı JSON dosyasına kaydeder."""
+    global CONFIG_FILE
     try:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
         return True
     except Exception as e:
         print(f"Ayar kaydetme hatası: {e}")
+        from app.paths import CODE_DIR
+        if CONFIG_FILE.parent != CODE_DIR:
+            fallback_file = CODE_DIR / "config.json"
+            try:
+                with open(fallback_file, "w", encoding="utf-8") as f:
+                    json.dump(config, f, ensure_ascii=False, indent=2)
+                CONFIG_FILE = fallback_file
+                return True
+            except Exception:
+                pass
         return False

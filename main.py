@@ -32,8 +32,9 @@ except Exception:
     except Exception:
         pass
 
+from app.paths import get_log_path, get_config_path, get_db_path, migrate_legacy_data
+
 def setup_exception_logging():
-    log_file = BASE_DIR / "ekran_sozlugu_error.log"
     def excepthook(exc_type, exc_value, exc_traceback):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -49,6 +50,8 @@ def setup_exception_logging():
         except Exception:
             pass
         try:
+            log_file = get_log_path()
+            log_file.parent.mkdir(parents=True, exist_ok=True)
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"\n[{now_str}] UNCAUGHT EXCEPTION:\n{err_str}\n" + "-"*50 + "\n")
         except Exception:
@@ -57,6 +60,8 @@ def setup_exception_logging():
 
 setup_exception_logging()
 
+import app.config
+import app.database
 from app.config import load_config, save_config
 from app.database import Database
 from app.tts_engine import GermanTTSEngine
@@ -69,6 +74,15 @@ from app.startup_manager import is_startup_enabled
 
 
 def main():
+    # 0. Eski verileri taşı (Migration)
+    migrated_files = migrate_legacy_data(BASE_DIR)
+    if migrated_files:
+        print(f"[Ekran Sözlüğü] Eski kullanıcı verileri yeni konuma kopyalandı: {', '.join(migrated_files)}")
+
+    # Geri düşüş (fallback) durumunda modül yollarını güncelle
+    app.config.CONFIG_FILE = get_config_path()
+    app.database.DB_PATH = get_db_path()
+
     # --startup bayrağı: Windows ile otomatik açılışta gizli başla
     start_hidden = "--startup" in sys.argv
 

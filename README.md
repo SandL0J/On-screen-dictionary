@@ -117,6 +117,22 @@ python main.py
 
 ---
 
+## 💾 Veri Konumu ve Yedekleme
+
+Ekran Sözlüğü kullanıcı ayarlarını, kelime defterini ve hata günlüklerini Windows standart kullanıcı veri klasöründe saklar:
+
+- **Veri Klasörü:** `%APPDATA%\EkranSozlugu` (örneğin: `C:\Users\<Kullanıcı>\AppData\Roaming\EkranSozlugu`)
+- **Saklanan Dosyalar:**
+  - `config.json`: Kullanıcı tercihleri, kısayol tuşları ve Gemini API ayarları
+  - `ekran_sozlugu.db`: Kelime defteri (SM-2 aralıklı tekrar verileri), çevrimdışı önbellek ve geçmiş
+  - `ekran_sozlugu_error.log`: Uygulama hata günlüğü
+
+> 🔄 **Otomatik Veri Göçü (Migration):** Uygulama başlatıldığında, proje klasöründeki eski kullanıcı verileri (`config.json`, `ekran_sozlugu.db` ve SQLite `-wal`/`-shm` yan dosyaları) hedefte henüz yoksa `%APPDATA%\EkranSozlugu` altına **otomatik olarak kopyalanır**. Kaynak dosyalar asla silinmez veya mevcut verilerin üzerine yazılmaz; kullanıcı verileri her zaman güvendedir.
+>
+> 📦 **Yedek Alma:** Kelime defterinizi ve ayarlarınızı yedeklemek veya yeni bir bilgisayara aktarmak için `%APPDATA%\EkranSozlugu` klasörünü kopyalamanız yeterlidir.
+
+---
+
 ## 📁 Proje Mimarisi
 
 ```
@@ -129,6 +145,7 @@ On-screen-dictionary/
 │   ├── hotkey_manager.py      # Win32 düşük seviyeli global klavye dinleyicisi
 │   ├── hover_tracker.py       # Fare yan tuşları (Mouse 4/5) ve imleç takip motoru
 │   ├── ocr_engine.py          # Windows Media OCR & kelime koordinat eşleştiricisi
+│   ├── paths.py               # Kullanıcı veri yolları (%APPDATA%) ve otomatik veri göçü
 │   ├── startup_manager.py     # Windows başlangıç kayıt defteri yönetimi
 │   ├── translator.py          # Türkçe hedef dilli ana çeviri motoru
 │   ├── tray_manager.py        # Windows sistem tepsisi (System Tray) entegrasyonu
@@ -139,7 +156,7 @@ On-screen-dictionary/
 │       ├── settings_window.py # Ayarlar ve Gemini API yönetim penceresi
 │       ├── snipper.py         # Ekran dondurmalı bölge kırpıcı
 │       └── wordbook_window.py # Kelime defteri ve flashcard arayüzü
-├── tests/                     # 88 birim ve regresyon testinden oluşan test paketi
+├── tests/                     # 155 birim ve regresyon testinden oluşan test paketi
 ├── main.py                    # Uygulama ana giriş noktası
 ├── run_app.bat                # Hızlı Windows başlatıcı
 ├── test_mouse_trigger.py      # Fare tuşu ve OCR teşhis aracı
@@ -156,7 +173,7 @@ On-screen-dictionary/
 
 Tüm test paketini çalıştırmak için:
 ```bash
-python -m unittest discover tests -v
+python -m unittest discover -s tests -v
 ```
 
 ---
