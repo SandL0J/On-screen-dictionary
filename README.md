@@ -2,6 +2,7 @@
 
 > **Almanca Öğrenenler İçin Akıllı Masaüstü Ekran ve Video Altyazı Çeviri Asistanı**
 
+[![Release](https://img.shields.io/badge/Release-v0.9.0-orange.svg)]()
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011-0078D6.svg)](https://www.microsoft.com/windows)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
