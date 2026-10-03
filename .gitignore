@@ -54,3 +54,11 @@ $RECYCLE.BIN/
 *.zip
 *.gdoc
 github_repo/
+
+# Internal logs and planning docs
+FEEDBACK.md
+FEEDBACK.md.*
+MIMARI_VE_GELISDIRME_PLANI.md
+SPRINT_LOG.md.*
+run.bat
+
