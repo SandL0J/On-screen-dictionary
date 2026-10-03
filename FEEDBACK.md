@@ -1695,3 +1695,94 @@ Kullanıcı `Alt+V` kısayoluyla veya ana çubuktaki `👁️ Hover` butonuna t�
 
 ## 3. Test Sonuçları
 - 138 birim testin 138'i başarıyla geçti (`Ran 138 tests in 10.475s - OK`).
+
+
+---
+
+# Kullanıcı Verisinin %APPDATA%\EkranSozlugu Altına Taşınması, Otomatik Göç ve Güçlendirme Raporu
+
+**Zaman Damgası:** 2026-10-03 02:41:00 (UTC+3)
+
+## 1. Değişen Dosyalar
+- **`app/paths.py`** (Yeni modül): `get_data_dir()`, `get_config_path()`, `get_db_path()`, `get_log_path()`, `migrate_legacy_data()` fonksiyonları eklendi. Geri düşüş (fallback) durumlarında `_UNWRITABLE_TARGETS` önbelleği eklendi. Writability probe dosyalarının `.write_test_*` istisna anında dahi `finally` bloğu ile silinmesi güvenceye alındı. Üretim kodundan `import tests` bağımlılığı tamamen kaldırıldı. SQLite `-wal` ve `-shm` dosyalarının hedefte zaten veritabanı varken kopyalanıp veritabanını bozması (WAL contamination) ve yetim WAL kopyalama açığı engellendi.
+- **`app/config.py`**: `CONFIG_FILE = get_config_path()` yapıldı; `save_config()` içine hedef dizin oluşturma (`mkdir(parents=True, exist_ok=True)`) ve yazılamama durumunda `CODE_DIR` üzerine geri düşüş eklendi.
+- **`app/database.py`**: `DB_PATH = get_db_path()` yapıldı; `Database.__init__` ve `_init_db()` içine veritabanı dizini oluşturulamadığında PermissionError ile çökmek yerine `CODE_DIR` altına güvenle geri düşme mekanizması eklendi.
+- **`main.py`**: `setup_exception_logging()` içinde hata logu yolu dinamik `get_log_path()` yapıldı; `main()` başlangıcında `load_config()` ve `Database()` çağrılarından önce `migrate_legacy_data(BASE_DIR)` çağrıldı, kopyalanan dosyalar varsa konsola tek satır bilgi basıldı ve geri düşüş durumunda modül sabitleri senkronize edildi.
+- **`tests/__init__.py`**: Ortak test kurulumu eklendi; `EKRAN_SOZLUGU_DATA_DIR` geçici bir dizine (`tempfile.mkdtemp()`) yönlendirildi ve test bitiminde otomatik temizlendi.
+- **`tests/test_paths.py`** (Yeni test paketi): Ortam değişkeni, APPDATA ve home fallback, yazılamayan dizin geri düşüşü, migrate dosya kopyalama, var olan dosyanın üzerine yazmama / kaynak silmeme, SQLite -wal ve -shm dosyalarını kopyalama, hedefte db varken WAL kopyalamama, yetim WAL kopyalamama, probe temizliği garantisi, idempotent ikinci çağrı, eksik kaynakta hata vermeme ve modül yolları doğrulandı (17 test).
+- **`README.md`**: "Veri Konumu ve Yedekleme" bölümü eklendi; proje mimarisi ağacı ve test sayısı (155 test) güncellendi.
+
+---
+
+## 2. Adım 0: Ön Keşif Bulguları
+1. **`app/config.py` içindeki `CONFIG_FILE`:**
+   - Satır 34: `CONFIG_FILE = Path(__file__).resolve().parent.parent / "config.json"`
+2. **`app/database.py` içindeki `DB_PATH`:**
+   - Satır 13: `DB_PATH = Path(__file__).resolve().parent.parent / "ekran_sozlugu.db"`
+   - Satır 63: `self.db_path = db_path or DB_PATH`
+3. **`main.py` içindeki `ekran_sozlugu_error.log` yolu:**
+   - Satır 36: `log_file = BASE_DIR / "ekran_sozlugu_error.log"`
+4. **`app/` altında dosya yolu üreten diğer yerler:**
+   - "config.json": Yalnızca `app/config.py`
+   - ".db": Yalnızca `app/database.py` (diğerleri değişken adı `self.db`)
+   - ".log": `app/` altında dosya yolu üreten yer yok
+   - `BASE_DIR`: `app/` altında yok
+   - `__file__`: `app/startup_manager.py:26` (`main_script = Path(__file__).resolve().parent.parent / "main.py"` - Windows başlangıç kısayoludur, kullanıcı verisi değildir)
+5. **`tests/` içinde `CONFIG_FILE`, `DB_PATH` veya `config.json`'a dokunan / patch'leyen yerler:**
+   - `tests/test_hotkey_manager.py:341`: `with patch("app.config.CONFIG_FILE", cfg_file):`
+   - `tests/test_no_tts.py:258`: `with patch("app.config.CONFIG_FILE", dummy_config_path):`
+   - `tests/test_database.py`, `tests/test_translator.py`, `tests/test_sm2.py`, `tests/test_stability_and_onboarding.py`, `tests/test_wordbook_sm2_gui.py`: Tüm testler `Database(self.db_path)` ile kendi izole geçici veritabanlarını parametre olarak vermektedir; parametresiz `Database()` çağıran test yoktur.
+
+---
+
+## 3. Gerçek Test Çıktısı (Ham)
+
+```text
+Ran 155 tests in 11.105s
+
+OK
+[Ekran Sozlugu] Hedef kelime bulundu: 'Hund'
+[Ekran Sozlugu] Fare Tusuna Basildi (WH_MOUSE_LL)! Konum: (250, 350)
+[Ekran Sozlugu] Fare Tusuna Basildi (WH_MOUSE_LL)! Konum: (150, 200)
+[Ekran Sözlüğü UYARI] Veri dizini (C:\Users\micro\AppData\Local\Temp\test_paths_suite_wyrj8oin\non_writable_target) oluşturulamadı veya yazılamıyor. Kod klasörüne (C:\Users\micro\OneDrive\Desktop\Ekran Sözlüğü) geri düşülüyor.
+[Ekran Sözlüğü UYARI] Veri dizini (C:\Users\micro\AppData\Local\Temp\test_paths_suite_er561344\unwritable_full) oluşturulamadı veya yazılamıyor. Kod klasörüne (C:\Users\micro\OneDrive\Desktop\Ekran Sözlüğü) geri düşülüyor.
+[Ekran Sözlüğü UYARI] Veritabanı dizini oluşturulamadı (Yazma engellendi). Kod klasörüne dönülüyor.
+[Gemini Direct Error] Standart motora geçiliyor: API connection timeout
+```
+
+---
+
+## 4. Git Durumu ve Commit Bilgisi
+
+### `git status`
+```text
+On branch main
+Your branch is ahead of 'origin/main' by 1 commit.
+  (use "git push" to publish your local commits)
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   FEEDBACK.md
+
+no changes added to commit (use "git add" and/or "git commit -a")
+```
+
+### `git log -3 --oneline`
+```text
+a33275d feat(paths): kullanici verisi %APPDATA%\EkranSozlugu altina tasindi, eski veri otomatik kopyalanir
+da0148f fix(hover): hover kapaliyken fare yan tuslarini tarayiciya serbest birak
+2893f51 feat: hover kapatma butonu, dinamik sure, ceviri dayanikliligi ve alt+c secim motoru
+```
+
+---
+
+## 5. Yarım Kalan İşler
+**Yok.** Görev kapsamındaki tüm maddeler (Ön Keşif, `app/paths.py`, `app/config.py`, `app/database.py`, `main.py`, `tests/__init__.py`, `tests/test_paths.py`, `README.md` ve Git Commit) eksiksiz olarak tamamlanmıştır.
+
+---
+
+## 6. Varsayımlar
+- Windows işletim sisteminde kullanıcı veri dizini `%APPDATA%\EkranSozlugu` olup, Linux/macOS veya `APPDATA` ortam değişkeninin bulunmadığı ortamlarda `Path.home() / ".ekran_sozlugu"` dizini kullanılmaktadır.
+- Birim testleri sırasında `tests/__init__.py` tarafından `EKRAN_SOZLUGU_DATA_DIR` ortam değişkeni dinamik bir geçici dizine yönlendirildiği için gerçek `%APPDATA%` dizinine hiçbir test verisi yazılmaz.
+- Eski kullanıcı verileri (`config.json`, `ekran_sozlugu.db`, `-wal`, `-shm`) hedef dizine kopyalanırken kaynak dosyalar asla silinmez ve hedefte zaten mevcut bir dosya varsa üzerine yazılmaz; SQLite yan dosyaları yalnızca ana veritabanı kopyalanıyorsa taşınarak SQLite veritabanı bütünlüğü korunur.
