@@ -56,6 +56,7 @@ $RECYCLE.BIN/
 github_repo/
 
 # Internal logs and planning docs
+_private/
 FEEDBACK.md
 FEEDBACK.md.*
 MIMARI_VE_GELISDIRME_PLANI.md
