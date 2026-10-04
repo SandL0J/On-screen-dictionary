@@ -6,8 +6,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Callable, Optional
 import threading
+import queue
 from datetime import datetime
 from app.config import save_config, DEFAULT_CONFIG
+from app.gemini_service import DEFAULT_MODEL, SUPPORTED_MODELS
 from app.hotkey_manager import validate_hotkey_string, format_hotkey
 from app.startup_manager import is_startup_enabled, enable_startup, disable_startup
 
@@ -25,6 +27,11 @@ class SettingsWindow:
         self.on_settings_changed = on_settings_changed
         self.ocr_engine = ocr_engine
         self.on_open_wizard = on_open_wizard
+        self._restore_timer_id = None
+        self._is_closed = False
+        self._ui_queue = queue.Queue()
+        self._ui_poll_id = None
+        self._poll_interval_ms = 15
 
         self.window = tk.Toplevel(parent)
         self.window.title("Ayarlar • Ekran Sözlüğü")
@@ -36,9 +43,49 @@ class SettingsWindow:
         self.window.geometry(f"580x{win_h}")
         self.window.minsize(540, 580)
         self.window.resizable(True, True)
-        self.window.configure(bg="#18181b")
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.window.bind("<Destroy>", self._on_destroy)
 
+        self._schedule_poll()
         self._init_ui()
+
+    def _schedule_poll(self):
+        if self._is_closed:
+            return
+        try:
+            if self.window.winfo_exists():
+                if self._ui_poll_id is not None:
+                    try:
+                        self.window.after_cancel(self._ui_poll_id)
+                    except Exception:
+                        pass
+                    self._ui_poll_id = None
+                self._ui_poll_id = self.window.after(self._poll_interval_ms, self._poll_queue)
+        except Exception:
+            pass
+
+    def _poll_queue(self):
+        self._ui_poll_id = None
+        if self._is_closed:
+            return
+        while not self._ui_queue.empty():
+            if self._is_closed:
+                break
+            try:
+                fn = self._ui_queue.get_nowait()
+                if not self._is_closed and self.window.winfo_exists():
+                    fn()
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"[Settings UI Hatası]: {e}")
+        if not self._is_closed:
+            self._schedule_poll()
+
+    def post_to_ui(self, fn: Callable):
+        """Worker iş parçacıklarından gelen UI görevlerini thread-safe kuyruğa ekler."""
+        if not self._is_closed:
+            self._ui_queue.put(fn)
 
     def _init_ui(self):
         # Alt Sabit Eylem ve Durum Çubuğu (Footer Frame) - Daima ekranın altında görünür kalır
@@ -113,8 +160,50 @@ class SettingsWindow:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Destroy>", self._on_destroy)
 
-        main_frame = tk.Frame(self.window, bg="#18181b", padx=16, pady=10)
-        main_frame.pack(side="top", fill="both", expand=True)
+        # Kaydırılabilir İçerik Alanı (Canvas + Scrollbar)
+        container = tk.Frame(self.window, bg="#18181b")
+        container.pack(side="top", fill="both", expand=True)
+
+        self.canvas = tk.Canvas(container, bg="#18181b", highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        scrollable_frame = tk.Frame(self.canvas, bg="#18181b", padx=16, pady=10)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        canvas_frame = self.canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def _on_canvas_configure(event):
+            self.canvas.itemconfig(canvas_frame, width=event.width)
+
+        self.canvas.bind("<Configure>", _on_canvas_configure)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        def _on_mousewheel(event):
+            try:
+                if self.window.winfo_exists() and hasattr(self, "canvas") and self.canvas.winfo_exists():
+                    self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+
+        def _bind_mousewheel(event):
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            try:
+                self.canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+
+        container.bind("<Enter>", _bind_mousewheel)
+        container.bind("<Leave>", _unbind_mousewheel)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        main_frame = scrollable_frame
 
         tk.Label(
             main_frame,
@@ -125,10 +214,11 @@ class SettingsWindow:
         ).pack(anchor="w", pady=(0, 10))
 
         # 1. Pano Dinleme
-        self.var_clipboard = tk.BooleanVar(value=self.config.get("clipboard_auto_lookup", True))
+        # 1. Pano Dinleme (Varsayılan: Kapalı)
+        self.var_clipboard = tk.BooleanVar(master=self.window, value=self.config.get("clipboard_auto_lookup", False))
         cb_clip = tk.Checkbutton(
             main_frame,
-            text="📋 Ctrl+C ile panodaki Almanca metinleri anında otomatik çevir",
+            text="📋 Panodaki Almanca metinleri otomatik çevir (Ctrl+C)",
             variable=self.var_clipboard,
             font=("Segoe UI", 9, "bold"),
             fg="#10b981",
@@ -141,14 +231,14 @@ class SettingsWindow:
 
         tk.Label(
             main_frame,
-            text="   (Herhangi bir uygulamada metin seçip Ctrl+C yaptığınız anda çeviri kartı açılır)",
+            text="   (Açıldığında panoya kopyalanan Almanca metinler çeviri için dış servise iletilir. Varsayılan: Kapalı)",
             font=("Segoe UI", 7, "italic"),
-            fg="#71717a",
+            fg="#a1a1aa",
             bg="#18181b"
         ).pack(anchor="w", pady=(0, 2))
 
         # 1b. Windows ile Otomatik Başlat
-        self.var_startup = tk.BooleanVar(value=is_startup_enabled())
+        self.var_startup = tk.BooleanVar(master=self.window, value=is_startup_enabled())
         cb_startup = tk.Checkbutton(
             main_frame,
             text="🚀 Windows başladığında otomatik olarak arka planda çalış",
@@ -163,7 +253,7 @@ class SettingsWindow:
         cb_startup.pack(anchor="w", pady=2)
 
         # 2. Her Zaman Üstte
-        self.var_topmost = tk.BooleanVar(value=self.config.get("always_on_top", True))
+        self.var_topmost = tk.BooleanVar(master=self.window, value=self.config.get("always_on_top", True))
         cb_top = tk.Checkbutton(
             main_frame,
             text="Ana çubuk ve kartlar her zaman diğer pencerelerin üstünde kalsın",
@@ -188,7 +278,7 @@ class SettingsWindow:
             bg="#18181b"
         ).pack(side="left")
 
-        self.var_duration = tk.IntVar(value=self.config.get("auto_hide_seconds", 12))
+        self.var_duration = tk.IntVar(master=self.window, value=self.config.get("auto_hide_seconds", 12))
         sp_dur = tk.Spinbox(
             duration_frame,
             from_=0,
@@ -201,6 +291,38 @@ class SettingsWindow:
         )
         sp_dur.pack(side="left", padx=8)
         tk.Label(duration_frame, text="sn (OCR & Pano kartı için; 0 = elle kapatana kadar açık kalır)", font=("Segoe UI", 8), fg="#71717a", bg="#18181b").pack(side="left")
+
+        # 3b. Arama Geçmişi Saklama Sınırı
+        history_frame = tk.Frame(main_frame, bg="#18181b", pady=3)
+        history_frame.pack(fill="x")
+        tk.Label(
+            history_frame,
+            text="Arama Geçmişi Sınırı:",
+            font=("Segoe UI", 9),
+            fg="#d4d4d8",
+            bg="#18181b"
+        ).pack(side="left")
+
+        self.var_history_limit = tk.IntVar(master=self.window, value=self.config.get("history_limit", 100))
+        sp_hist = tk.Spinbox(
+            history_frame,
+            from_=10,
+            to=1000,
+            increment=10,
+            textvariable=self.var_history_limit,
+            width=5,
+            font=("Segoe UI", 9),
+            bg="#27272a",
+            fg="#fafafa"
+        )
+        sp_hist.pack(side="left", padx=8)
+        tk.Label(
+            history_frame,
+            text="kayıt (Sınıra ulaşılınca yeni aramada en eski kayıtlar silinir; Kelime Defteri etkilenmez)",
+            font=("Segoe UI", 8),
+            fg="#71717a",
+            bg="#18181b"
+        ).pack(side="left")
 
         # 4. Canlı Fare Üzerine Gelme (Hover) Ayarları
         hover_section = tk.LabelFrame(
@@ -215,7 +337,7 @@ class SettingsWindow:
         )
         hover_section.pack(fill="x", pady=(4, 5))
 
-        self.var_hover_enabled = tk.BooleanVar(value=self.config.get("hover_enabled", True))
+        self.var_hover_enabled = tk.BooleanVar(master=self.window, value=self.config.get("hover_enabled", True))
         cb_hover = tk.Checkbutton(
             hover_section,
             text="Canlı Hover Modu (Farenin altındaki kelimeyi okuma aktif)",
@@ -233,7 +355,7 @@ class SettingsWindow:
         f_hover_mode.pack(fill="x", pady=2)
         tk.Label(f_hover_mode, text="Çeviri Tetikleyicisi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
 
-        self.var_hover_trigger = tk.StringVar(value=self.config.get("hover_trigger_mode", "mouse_side"))
+        self.var_hover_trigger = tk.StringVar(master=self.window, value=self.config.get("hover_trigger_mode", "mouse_side"))
         trigger_options = [
             ("Fare Yan Tuşu (Mouse 4/5)", "mouse_side"),
             ("Orta Tuş (Tekerlek)", "mouse_middle"),
@@ -260,7 +382,7 @@ class SettingsWindow:
         f_hover_delay = tk.Frame(hover_section, bg="#18181b")
         f_hover_delay.pack(fill="x", pady=1)
         tk.Label(f_hover_delay, text="Duraklama Süresi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
-        self.var_hover_delay = tk.IntVar(value=self.config.get("hover_delay_ms", 300))
+        self.var_hover_delay = tk.IntVar(master=self.window, value=self.config.get("hover_delay_ms", 300))
         sp_delay = tk.Spinbox(
             f_hover_delay,
             from_=150,
@@ -278,7 +400,7 @@ class SettingsWindow:
         f_hover_dur = tk.Frame(hover_section, bg="#18181b")
         f_hover_dur.pack(fill="x", pady=1)
         tk.Label(f_hover_dur, text="Baloncuk Süresi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=16, anchor="w").pack(side="left")
-        self.var_hover_duration = tk.IntVar(value=self.config.get("hover_auto_hide_seconds", 5))
+        self.var_hover_duration = tk.IntVar(master=self.window, value=self.config.get("hover_auto_hide_seconds", 5))
         sp_h_dur = tk.Spinbox(
             f_hover_dur,
             from_=0,
@@ -405,7 +527,7 @@ class SettingsWindow:
         f_ocr_pref.pack(fill="x", pady=2)
         tk.Label(f_ocr_pref, text="OCR Tercihi:", font=("Segoe UI", 8, "bold"), fg="#d4d4d8", bg="#18181b", width=14, anchor="w").pack(side="left")
 
-        self.var_ocr_pref = tk.StringVar(value=self.config.get("ocr_engine_preference", "auto"))
+        self.var_ocr_pref = tk.StringVar(master=self.window, value=self.config.get("ocr_engine_preference", "auto"))
         ocr_opts = [
             ("Otomatik (Önerilen)", "auto"),
             ("Windows Media OCR", "windows_media"),
@@ -542,11 +664,36 @@ class SettingsWindow:
             cursor="hand2",
             command=self._test_gemini_api
         )
-        self.btn_test_api.pack(side="left")
+        self.btn_test_api.pack(side="left", padx=(0, 4))
+
+        # Anahtarı Temizle / Sil Butonu (Açık ve kasıtlı silme)
+        self.btn_clear_api = tk.Button(
+            f_api_input,
+            text="🗑 Sil",
+            font=("Segoe UI", 8),
+            bg="#3f3f46",
+            fg="#f87171",
+            activebackground="#ef4444",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=6,
+            cursor="hand2",
+            command=self._clear_api_key
+        )
+        self.btn_clear_api.pack(side="left")
 
         # Durum İbaresi (Status Label)
-        init_status = "🔑 Kayıtlı anahtar mevcut. Test etmek için 'Test Et'e basın." if saved_key else "⚪ API anahtarı girilmedi (Temel çeviri motoru aktif)"
-        init_color = "#38bdf8" if saved_key else "#71717a"
+        has_decrypt_error = bool(self.config.get("_gemini_api_key_error") or (not saved_key and self.config.get("_gemini_api_key_encrypted_raw")))
+        if has_decrypt_error:
+            init_status = "⚠️ Kayıtlı anahtar bu cihazda çözülemedi (DPAPI hatası). Yeni anahtar girebilir veya silebilirsiniz."
+            init_color = "#ef4444"
+        elif saved_key:
+            init_status = "🔑 Kayıtlı anahtar mevcut. Test etmek için 'Test Et'e basın."
+            init_color = "#38bdf8"
+        else:
+            init_status = "⚪ API anahtarı girilmedi (Temel çeviri motoru aktif)"
+            init_color = "#71717a"
+
         self.lbl_api_status = tk.Label(
             api_section,
             text=init_status,
@@ -563,7 +710,7 @@ class SettingsWindow:
         tk.Frame(api_section, height=1, bg="#27272a").pack(fill="x", pady=4)
 
         # Doğrudan Gemini ile Çevir Seçeneği
-        self.var_use_gemini_direct = tk.BooleanVar(value=self.config.get("use_gemini_direct", False))
+        self.var_use_gemini_direct = tk.BooleanVar(master=self.window, value=self.config.get("use_gemini_direct", False))
         cb_gemini_direct = tk.Checkbutton(
             api_section,
             text="🤖 Her Şeyi Doğrudan Gemini AI ile Çevir (Öncelikli Mod)",
@@ -592,7 +739,7 @@ class SettingsWindow:
         ).pack(side="left")
 
         from app.gemini_service import SUPPORTED_MODELS
-        self.var_gemini_model = tk.StringVar(value=self.config.get("gemini_model", "gemini-3.1-flash-lite"))
+        self.var_gemini_model = tk.StringVar(master=self.window, value=self.config.get("gemini_model", DEFAULT_MODEL))
         model_choices = [m[0] for m in SUPPORTED_MODELS]
         self.cb_model_choice = ttk.Combobox(
             f_model,
@@ -615,7 +762,7 @@ class SettingsWindow:
         # Bilgilendirme Notu
         tk.Label(
             api_section,
-            text="💡 İpucu: 'gemini-1.5-flash' modeli Google AI Studio ücretsiz planında (günde 1500 istek hakkı) neredeyse sıfır harcama ile en doğru artikel, çoğul ve dilbilgisi sonuçlarını üretir.",
+            text="💡 İpucu: Güncel Flash modelleri (ör. gemini-3.5-flash-lite, gemini-3.8-flash) Google AI Studio'da hızlı ve ekonomik artikel, çoğul ve dilbilgisi sonuçları üretir. Güncel model ve kota belgeleri için ai.google.dev adresini ziyaret edebilirsiniz.",
             font=("Segoe UI", 7, "italic"),
             fg="#9ca3af",
             bg="#18181b",
@@ -655,13 +802,40 @@ class SettingsWindow:
             self.btn_toggle_mask.configure(text="👁")
             self._api_masked = True
 
+    def _clear_api_key(self):
+        """API anahtarı giriş kutusunu temizler ve açık silme durumunu işaretler."""
+        self.entry_api.delete(0, tk.END)
+        self._explicit_key_cleared = True
+        self.config["gemini_api_key"] = ""
+        self.config["_gemini_api_key_cleared"] = True
+        self.config.pop("_gemini_api_key_encrypted_raw", None)
+        self.config.pop("_gemini_api_key_error", None)
+        self.lbl_api_status.configure(
+            text="⚪ API anahtarı temizlendi (Ayarları Kaydet ile silinecektir)",
+            fg="#a1a1aa"
+        )
+
     def _test_gemini_api(self):
         """Gemini API anahtarını asenkron olarak test eder ve sonucu kullanıcıya bildirir."""
         key = self.entry_api.get().strip()
         if not key:
+            if self.config.get("_gemini_api_key_encrypted_raw") or self.config.get("_gemini_api_key_error"):
+                self.lbl_api_status.configure(
+                    text="⚠️ Kayıtlı anahtar bu cihazda çözülemedi. Lütfen yeni bir API anahtarı girin.",
+                    fg="#ef4444"
+                )
+            else:
+                self.lbl_api_status.configure(
+                    text="⚠️ Lütfen önce bir Gemini API anahtarı girin.",
+                    fg="#f59e0b"
+                )
+            return
+
+        from app.security import is_dpapi_protected
+        if is_dpapi_protected(key):
             self.lbl_api_status.configure(
-                text="⚠️ Lütfen önce bir Gemini API anahtarı girin.",
-                fg="#f59e0b"
+                text="⚠️ Şifreli metin doğrudan test edilemez. Lütfen geçerli bir Gemini API anahtarı girin.",
+                fg="#ef4444"
             )
             return
 
@@ -678,18 +852,14 @@ class SettingsWindow:
 
             def _update_ui():
                 try:
-                    if self.window.winfo_exists():
+                    if not self._is_closed and self.window.winfo_exists():
                         self.btn_test_api.configure(state="normal")
                         color = "#10b981" if success else "#ef4444"
                         self.lbl_api_status.configure(text=message, fg=color)
                 except Exception:
                     pass
 
-            try:
-                if self.window.winfo_exists():
-                    self.window.after(0, _update_ui)
-            except Exception:
-                pass
+            self.post_to_ui(_update_ui)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -706,6 +876,7 @@ class SettingsWindow:
             ("Çubuğu Gizle/Göster", hotkey_overlay),
             ("Panoyu Çevir", hotkey_clip),
         ]
+        seen_hotkeys = {}
         for name, key_str in fields:
             if not key_str:
                 if hasattr(self, "lbl_save_status"):
@@ -728,14 +899,46 @@ class SettingsWindow:
                     parent=self.window
                 )
                 return
+            normalized = format_hotkey(key_str).lower()
+            if normalized in seen_hotkeys:
+                other_name = seen_hotkeys[normalized]
+                if hasattr(self, "lbl_save_status"):
+                    self.lbl_save_status.configure(
+                        text=f"⚠️ Kısayol çakışması: '{name}' ile '{other_name}' aynı tuşa ({normalized}) sahip!",
+                        fg="#ef4444"
+                    )
+                messagebox.showerror(
+                    "Kısayol Çakışması",
+                    f"'{name}' ve '{other_name}' için aynı kısayol tuşu ({normalized}) atanamaz!\n\nLütfen farklı tuş kombinasyonları belirleyin.",
+                    parent=self.window
+                )
+                return
+            seen_hotkeys[normalized] = name
 
         self.config["clipboard_auto_lookup"] = self.var_clipboard.get()
         self.config.pop("sound_enabled", None)
         self.config["always_on_top"] = self.var_topmost.get()
         self.config["auto_hide_seconds"] = self.var_duration.get()
-        self.config["gemini_api_key"] = self.entry_api.get().strip()
+        if hasattr(self, "var_history_limit"):
+            try:
+                self.config["history_limit"] = int(self.var_history_limit.get())
+            except (ValueError, TypeError):
+                self.config["history_limit"] = 100
+        entered_key = self.entry_api.get().strip()
+        if entered_key:
+            self.config["gemini_api_key"] = entered_key
+            self.config.pop("_gemini_api_key_encrypted_raw", None)
+            self.config.pop("_gemini_api_key_cleared", None)
+            self.config.pop("_gemini_api_key_error", None)
+        elif getattr(self, "_explicit_key_cleared", False):
+            self.config["gemini_api_key"] = ""
+            self.config["_gemini_api_key_cleared"] = True
+            self.config.pop("_gemini_api_key_encrypted_raw", None)
+            self.config.pop("_gemini_api_key_error", None)
+        else:
+            self.config["gemini_api_key"] = ""
         self.config["use_gemini_direct"] = self.var_use_gemini_direct.get()
-        self.config["gemini_model"] = self.var_gemini_model.get().strip() or "gemini-3.1-flash-lite"
+        self.config["gemini_model"] = self.var_gemini_model.get().strip() or DEFAULT_MODEL
 
         # Hover Ayarları
         self.config["hover_enabled"] = self.var_hover_enabled.get()
@@ -762,7 +965,20 @@ class SettingsWindow:
         else:
             disable_startup()
 
-        save_config(self.config)
+        saved = save_config(self.config)
+        if not saved:
+            if hasattr(self, "lbl_save_status"):
+                self.lbl_save_status.configure(
+                    text="❌ Ayarlar kaydedilemedi! Dosya yazma hatası.",
+                    fg="#ef4444"
+                )
+            messagebox.showerror(
+                "Kayıt Hatası",
+                "Ayarlar dosyasına yazılamadı. Lütfen disk izinlerinizi kontrol edin.",
+                parent=self.window
+            )
+            return
+
         self.on_settings_changed(self.config)
 
         # Durum bildirimi ve görsel geri bildirim
@@ -803,12 +1019,24 @@ class SettingsWindow:
 
     def close(self):
         """Pencereyi kapatır ve bekleyen zamanlayıcıları iptal eder."""
+        self._is_closed = True
         if hasattr(self, "_restore_timer_id") and self._restore_timer_id:
             try:
                 self.window.after_cancel(self._restore_timer_id)
             except Exception:
                 pass
             self._restore_timer_id = None
+        if self._ui_poll_id is not None:
+            try:
+                self.window.after_cancel(self._ui_poll_id)
+            except Exception:
+                pass
+            self._ui_poll_id = None
+        while not self._ui_queue.empty():
+            try:
+                self._ui_queue.get_nowait()
+            except Exception:
+                break
         try:
             self.window.destroy()
         except Exception:
@@ -817,12 +1045,29 @@ class SettingsWindow:
     def _on_destroy(self, event):
         """Pencere yok edildiğinde bekleyen zamanlayıcıları iptal eder."""
         if getattr(event, "widget", None) == self.window:
+            self._is_closed = True
             if hasattr(self, "_restore_timer_id") and self._restore_timer_id:
                 try:
                     self.window.after_cancel(self._restore_timer_id)
                 except Exception:
                     pass
                 self._restore_timer_id = None
+            if self._ui_poll_id is not None:
+                try:
+                    self.window.after_cancel(self._ui_poll_id)
+                except Exception:
+                    pass
+                self._ui_poll_id = None
+            while not self._ui_queue.empty():
+                try:
+                    self._ui_queue.get_nowait()
+                except Exception:
+                    break
+            try:
+                if hasattr(self, "canvas") and self.canvas:
+                    self.canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
 
     def _restore_save_button(self):
         self._restore_timer_id = None
@@ -847,11 +1092,13 @@ class SettingsWindow:
         if not confirm:
             return
 
-        # 1. Pano Dinleme, Otomatik Başlatma, Her Zaman Üstte, Süre
-        self.var_clipboard.set(DEFAULT_CONFIG.get("clipboard_auto_lookup", True))
+        # 1. Pano Dinleme, Otomatik Başlatma, Her Zaman Üstte, Süre, Geçmiş Limiti
+        self.var_clipboard.set(DEFAULT_CONFIG.get("clipboard_auto_lookup", False))
         self.var_startup.set(False)
         self.var_topmost.set(DEFAULT_CONFIG.get("always_on_top", True))
         self.var_duration.set(DEFAULT_CONFIG.get("auto_hide_seconds", 12))
+        if hasattr(self, "var_history_limit"):
+            self.var_history_limit.set(DEFAULT_CONFIG.get("history_limit", 100))
 
         # 2. Canlı Hover
         self.var_hover_enabled.set(DEFAULT_CONFIG.get("hover_enabled", True))
@@ -888,10 +1135,14 @@ class SettingsWindow:
         if hasattr(self, "entry_api"):
             self.entry_api.delete(0, tk.END)
             self.entry_api.insert(0, DEFAULT_CONFIG.get("gemini_api_key", ""))
+            self._explicit_key_cleared = True
+            self.config["_gemini_api_key_cleared"] = True
+            self.config.pop("_gemini_api_key_encrypted_raw", None)
+            self.config.pop("_gemini_api_key_error", None)
         if hasattr(self, "var_use_gemini_direct"):
             self.var_use_gemini_direct.set(DEFAULT_CONFIG.get("use_gemini_direct", False))
         if hasattr(self, "var_gemini_model"):
-            self.var_gemini_model.set(DEFAULT_CONFIG.get("gemini_model", "gemini-3.1-flash-lite"))
+            self.var_gemini_model.set(DEFAULT_CONFIG.get("gemini_model", DEFAULT_MODEL))
         if hasattr(self, "lbl_api_status"):
             self.lbl_api_status.configure(
                 text="⚪ API anahtarı girilmedi (Temel çeviri motoru aktif)",
@@ -923,17 +1174,13 @@ class SettingsWindow:
             success, msg = engine.test_ocr("Guten Tag")
             def _update():
                 try:
-                    if self.window.winfo_exists():
+                    if not self._is_closed and self.window.winfo_exists():
                         self.btn_test_ocr.configure(state="normal")
                         color = "#10b981" if success else "#ef4444"
                         self.lbl_ocr_status.configure(text=msg, fg=color)
                 except Exception:
                     pass
-            try:
-                if self.window.winfo_exists():
-                    self.window.after(0, _update)
-            except Exception:
-                pass
+            self.post_to_ui(_update)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -949,5 +1196,3 @@ class SettingsWindow:
             trans = TranslationEngine(gemini_api_key=self.config.get("gemini_api_key", ""))
             OnboardingWizard(self.window.master, self.config, eng, trans)
             self.window.destroy()
-
-

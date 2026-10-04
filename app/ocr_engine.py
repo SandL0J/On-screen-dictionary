@@ -219,7 +219,12 @@ if ($result) {
         if not image or image.width <= 2 or image.height <= 2:
             return ""
 
-        use_tesseract_first = (self.preference == "tesseract" and bool(self.tesseract_cmd))
+        use_tesseract_first = (
+            bool(self.tesseract_cmd) and (
+                self.preference == "tesseract" or
+                (self.preference == "auto" and getattr(self, "_german_ocr_available", None) is False)
+            )
+        )
 
         if use_tesseract_first:
             res = self._recognize_with_tesseract(image)
@@ -532,33 +537,75 @@ if ($result) {
         """
         OCR motorlarının sistemdeki güncel durumunu ve kullanılabilirliğini raporlar.
         Sihirbaz (Onboarding Wizard) ve Ayarlar penceresi için durum bilgisi sağlar.
+        Almanca dil paketi (de-DE) eksik olduğunda yanıltıcı 'is_ready' durumunu engeller.
         """
         win_available = False
+        german_supported = False
         try:
-            # Hızlı kontrol: Windows PowerShell ile test
-            test_cmd = ["powershell", "-NoProfile", "-Command", "[Windows.Media.Ocr.OcrEngine, Windows.Foundation.Diagnostics, ContentType = WindowsRuntime] | Out-Null; $e = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); if ($e) { Write-Output 'OK' } else { Write-Output 'NO' }"]
-            proc = subprocess.run(test_cmd, capture_output=True, text=True, timeout=4, errors="replace")
-            win_available = ("OK" in proc.stdout)
+            test_cmd = [
+                "powershell", "-NoProfile", "-Command",
+                "[Windows.Media.Ocr.OcrEngine, Windows.Foundation.Diagnostics, ContentType = WindowsRuntime] | Out-Null; "
+                "[Windows.Globalization.Language, Windows.Foundation.Diagnostics, ContentType = WindowsRuntime] | Out-Null; "
+                "$w = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); "
+                "$winOk = if ($w) { 'WIN_OK' } else { 'WIN_NO' }; "
+                "$deLang = [Windows.Globalization.Language]::new('de-DE'); "
+                "$deSupp = [Windows.Media.Ocr.OcrEngine]::IsLanguageSupported($deLang); "
+                "if (-not $deSupp) { "
+                "  try { $deShort = [Windows.Globalization.Language]::new('de'); $deSupp = [Windows.Media.Ocr.OcrEngine]::IsLanguageSupported($deShort) } catch {} "
+                "}; "
+                "$deOk = if ($deSupp) { 'DE_OK' } else { 'DE_NO' }; "
+                "Write-Output \"$winOk $deOk\""
+            ]
+            proc = subprocess.run(test_cmd, capture_output=True, text=True, timeout=5, errors="replace")
+            out = proc.stdout.strip()
+            win_available = ("WIN_OK" in out)
+            german_supported = ("DE_OK" in out)
         except Exception:
             win_available = False
+            german_supported = False
+
+        self._german_ocr_available = german_supported
 
         tess_path = self.tesseract_cmd or find_tesseract_path()
         tess_available = bool(tess_path and os.path.isfile(tess_path))
 
         active = "Yok"
-        if win_available and tess_available:
-            active = f"Windows Media OCR & Tesseract (Tercih: {self.preference})"
-        elif win_available:
-            active = "Windows Media OCR (Yerleşik Windows Motoru)"
+        guidance = ""
+        is_ready = False
+
+        if win_available and german_supported and tess_available:
+            active = f"Windows Media OCR (Almanca) & Tesseract (Tercih: {self.preference})"
+            is_ready = True
+        elif win_available and german_supported:
+            active = "Windows Media OCR (Almanca Dili Hazır)"
+            is_ready = True
         elif tess_available:
             active = f"Tesseract OCR ({tess_path})"
+            is_ready = True
+            if win_available and not german_supported:
+                guidance = "Windows Media OCR sisteminizde mevcut ancak Almanca dil paketi eksik. Tesseract motoru yedek olarak devrede."
+        elif win_available and not german_supported:
+            active = "Windows Media OCR (Almanca Dil Paketi Eksik!)"
+            is_ready = False
+            guidance = (
+                "Windows Media OCR sistemde var ancak Almanca (de-DE) OCR paketi yüklü değil! "
+                "Almanca karakterlerin (ä, ö, ü, ß) bozulmadan tanınması için: "
+                "Windows Ayarları > Zaman ve Dil > Dil > 'Dil ekle' adımından Almanca (Almanya) ekleyip "
+                "'Metin Tanıma (OCR)' bileşenini yükleyin veya Tesseract OCR kurun."
+            )
+        else:
+            active = "Yok"
+            is_ready = False
+            guidance = "Sisteminizde kullanılabilir bir OCR motoru bulunamadı. Lütfen Windows Almanca OCR paketini veya Tesseract OCR kurun."
 
         return {
             "windows_media_ocr": win_available,
+            "german_supported": german_supported,
             "tesseract_ocr": tess_available,
             "tesseract_path": tess_path or "",
             "active_backend": active,
-            "is_ready": win_available or tess_available,
+            "is_ready": is_ready,
+            "guidance": guidance,
             "preference": self.preference
         }
 
@@ -566,6 +613,8 @@ if ($result) {
         """
         Sentetik bir test görüntüsü oluşturarak OCR motorunun çalışmasını test eder.
         Dönüş: (başarılı_mı, mesaj)
+        Windows konsollarında cp1254/cp1252 UnicodeEncodeError çökmesini önlemek için
+        mesajlar ascii/güvenli karakterlerle formatlanır.
         """
         try:
             img = Image.new("RGB", (320, 80), color=(255, 255, 255))
@@ -575,14 +624,14 @@ if ($result) {
 
             recognized = self.recognize_from_image(img)
             if not recognized:
-                return False, "❌ OCR çıktısı boş döndü. Dil paketlerinizi veya Tesseract kurulumunu kontrol edin."
+                return False, "[HATA] OCR çıktısı boş döndü. Dil paketlerinizi veya Tesseract kurulumunu kontrol edin."
 
             # İçeriyor mu kontrol et
             clean_rec = recognized.lower().replace(" ", "")
             clean_target = sample_text.lower().replace(" ", "")
             if clean_target in clean_rec or clean_rec in clean_target or len(clean_rec) >= 4:
-                return True, f"✅ OCR Başarıyla Doğrulandı! Tanınan Metin: '{recognized}'"
+                return True, f"[OK] OCR Başarıyla Doğrulandı! Tanınan Metin: '{recognized}'"
             else:
-                return True, f"⚠️ OCR Çalıştı fakat metin farklı okundu: '{recognized}'"
+                return True, f"[UYARI] OCR Çalıştı fakat metin farklı okundu: '{recognized}'"
         except Exception as e:
-            return False, f"❌ OCR Test Hatası: {str(e)}"
+            return False, f"[HATA] OCR Test Hatası: {str(e)}"

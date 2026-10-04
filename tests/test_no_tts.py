@@ -62,6 +62,16 @@ class TestTTSFeatureRemoval(unittest.TestCase):
             self.temp_dir.cleanup()
         except Exception:
             pass
+        if getattr(self, "tk_available", False) and self.root:
+            for child in list(self.root.winfo_children()):
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+            try:
+                self.root.update()
+            except Exception:
+                pass
 
     def test_config_sound_enabled_removed(self):
         """DEFAULT_CONFIG içinde 'sound_enabled' anahtarı bulunmamalıdır."""
@@ -231,7 +241,7 @@ class TestTTSFeatureRemoval(unittest.TestCase):
             ocr_engine=ocr,
             db=self.db,
             clipboard_watcher=watcher,
-            config={"always_on_top": False}
+            config={"always_on_top": False, "first_run_completed": True}
         )
         try:
             self.assertEqual(overlay.db, self.db)

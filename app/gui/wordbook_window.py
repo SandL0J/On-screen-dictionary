@@ -28,6 +28,7 @@ class WordbookWindow:
 
         self._init_ui()
         self._load_words()
+        self._load_flashcard_words()
 
     def _init_ui(self):
         # Üst Başlık & İstatistikler
@@ -74,14 +75,14 @@ class WordbookWindow:
 
         # Arama Kutusu
         tk.Label(filter_bar, text="🔍 Ara:", font=("Segoe UI", 9, "bold"), fg="#fafafa", bg="#18181b").pack(side="left", padx=(0, 6))
-        self.search_var = tk.StringVar()
+        self.search_var = tk.StringVar(master=self.window)
         self.search_entry = tk.Entry(filter_bar, textvariable=self.search_var, font=("Segoe UI", 9), bg="#27272a", fg="#fafafa", insertbackground="white", width=20)
         self.search_entry.pack(side="left", padx=(0, 12))
         self.search_entry.bind("<KeyRelease>", lambda e: self._load_words())
 
         # Artikel Filtresi
         tk.Label(filter_bar, text="Artikel:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left", padx=(0, 4))
-        self.article_var = tk.StringVar(value="Hepsi")
+        self.article_var = tk.StringVar(master=self.window, value="Hepsi")
         art_cb = ttk.Combobox(filter_bar, textvariable=self.article_var, values=["Hepsi", "der", "die", "das"], width=8, state="readonly")
         art_cb.pack(side="left", padx=(0, 12))
         art_cb.bind("<<ComboboxSelected>>", lambda e: self._load_words())
@@ -362,7 +363,6 @@ class WordbookWindow:
             ))
 
         self._update_stats_display()
-        self._load_flashcard_words()
 
     def _show_current_flashcard(self):
         total_words = 0
@@ -432,10 +432,17 @@ class WordbookWindow:
             self.db.update_sm2_review(word_id, quality)
 
         if self.flashcard_mode == "due":
-            # Değerlendirilen kelime kuyruktan çıkarılır
-            self.flashcard_words.pop(self.current_card_index)
-            if self.flashcard_words and self.current_card_index >= len(self.flashcard_words):
-                self.current_card_index = 0
+            if quality < 3:
+                # Hatırlanamayan (Yeniden / 1) kelime bu oturumda tekrar edilmek üzere kuyruğun sonuna taşınır
+                failed_card = self.flashcard_words.pop(self.current_card_index)
+                self.flashcard_words.append(failed_card)
+                if self.current_card_index >= len(self.flashcard_words):
+                    self.current_card_index = 0
+            else:
+                # Başarılı değerlendirilen kelime kuyruktan çıkarılır
+                self.flashcard_words.pop(self.current_card_index)
+                if self.flashcard_words and self.current_card_index >= len(self.flashcard_words):
+                    self.current_card_index = 0
         else:
             # Tüm kelimeler modunda kelime listeden çıkarılmaz, sadece sıradaki karta ilerlenir
             if self.flashcard_words:
@@ -462,8 +469,19 @@ class WordbookWindow:
         pass
 
     def _on_row_double_click(self, event):
-        """Çift tıklamada ses çalma özelliği devre dışı bırakılmıştır."""
-        pass
+        """Çift tıklamada seçili kelimeyi ve Türkçe anlamını panoya kopyalar."""
+        try:
+            item_id = self.tree.focus()
+            if not item_id:
+                return
+            vals = self.tree.item(item_id, "values")
+            if vals and len(vals) >= 5:
+                art = f"{vals[1]} " if vals[1] and vals[1] != "-" else ""
+                txt = f"{art}{vals[2]} -> {vals[4]}"
+                self.window.clipboard_clear()
+                self.window.clipboard_append(txt)
+        except Exception:
+            pass
 
     def _delete_selected_word(self):
         item_id = self.tree.focus()
@@ -477,6 +495,10 @@ class WordbookWindow:
         if messagebox.askyesno("Kelimeyi Sil", f"'{german_word}' kelimesini silmek istediğinize emin misiniz?", parent=self.window):
             self.db.delete_word(word_id)
             self._load_words()
+            self.flashcard_words = [w for w in self.flashcard_words if w.get("id") != word_id]
+            if self.current_card_index >= len(self.flashcard_words):
+                self.current_card_index = max(0, len(self.flashcard_words) - 1)
+            self._show_current_flashcard()
 
     def _export_to_anki(self):
         file_path = filedialog.asksaveasfilename(

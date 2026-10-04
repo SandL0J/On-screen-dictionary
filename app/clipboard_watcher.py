@@ -9,6 +9,8 @@ import ctypes
 import re
 from typing import Callable, Optional
 
+from app.security import is_sensitive_clipboard_text
+
 # Win32 API Tanımları
 try:
     user32 = ctypes.windll.user32
@@ -100,11 +102,16 @@ def copy_selected_text_windows(timeout_ms: int = 100) -> Optional[str]:
 
 
 class ClipboardWatcher:
-    def __init__(self, on_text_detected: Callable[[str], None], check_interval: float = 0.35):
-        self.on_text_detected = on_text_detected
+    def __init__(
+        self,
+        on_text_detected: Optional[Callable[[str], None]] = None,
+        check_interval: float = 0.35,
+        enabled: bool = False
+    ):
+        self.on_text_detected = on_text_detected or (lambda t: None)
         self.check_interval = check_interval
         self._running = False
-        self._enabled = True
+        self._enabled = enabled
         self._thread: Optional[threading.Thread] = None
         self._last_text = ""
 
@@ -148,6 +155,9 @@ class ClipboardWatcher:
     def _is_valid_candidate(self, text: str) -> bool:
         """Kopyalanan metnin çeviriye uygun olup olmadığını doğrular."""
         if len(text) > 500:  # Çok uzun metinleri atla
+            return False
+        # Hassas pano verilerini filtrele (parola, API anahtarı, token, IBAN, kart vb.)
+        if is_sensitive_clipboard_text(text):
             return False
         # Sadece sayılardan mı oluşuyor?
         if text.replace(" ", "").isdigit():

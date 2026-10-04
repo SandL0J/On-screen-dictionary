@@ -16,6 +16,8 @@ import math
 from typing import Callable, Optional, Dict, Any, Tuple
 from PIL import Image
 
+from app.security import is_sensitive_clipboard_text
+
 try:
     user32 = ctypes.windll.user32
     gdi32 = ctypes.windll.gdi32
@@ -201,6 +203,7 @@ class HoverTracker:
         consume_xbutton: bool = True,
         crop_width: int = 440,
         crop_height: int = 120,
+        worker_pool: Optional[Any] = None,
     ):
         self.ocr_engine = ocr_engine
         self.translator = translator
@@ -208,6 +211,7 @@ class HoverTracker:
         self.on_hover_leave = on_hover_leave
         self.on_loading = on_loading
         self.on_not_found = on_not_found
+        self.worker_pool = worker_pool
 
         self.hover_delay_sec = max(hover_delay_ms, 150) / 1000.0
         self.trigger_mode = trigger_mode.lower()
@@ -229,6 +233,7 @@ class HoverTracker:
         self._last_x = -1
         self._last_y = -1
         self._hover_start_time = 0.0
+        self._last_trigger_time = 0.0
         self._scanned_this_pause = False
         self._active_word: Optional[str] = None
         self._active_word_screen_rect: Optional[Tuple[int, int, int, int]] = None
@@ -248,6 +253,21 @@ class HoverTracker:
                 self.on_not_found(cursor_x, cursor_y)
             except Exception:
                 pass
+
+    def _submit_inspect_task(self, cx: int, cy: int, is_passive_hover: bool = False):
+        """İmleç çevresini inceleme görevini varsa sınırlı worker pool'a, yoksa arka plan thread'ine iletir."""
+        if not self._running:
+            return None
+        pool = getattr(self, "worker_pool", None)
+        if pool:
+            return pool.submit(self._inspect_hover_area, cx, cy, is_passive_hover)
+        t = threading.Thread(
+            target=self._inspect_hover_area,
+            args=(cx, cy, is_passive_hover),
+            daemon=True
+        )
+        t.start()
+        return t
 
     def set_enabled(self, enabled: bool):
         """Hover / Fare takip modunu açar veya kapatır."""
@@ -345,6 +365,13 @@ class HoverTracker:
             is_trigger_up = is_xbutton_up or is_mbutton_up
 
             if is_trigger_down:
+                now = time.time()
+                if now - self._last_trigger_time < 0.25:
+                    if self.consume_xbutton and (is_xbutton_down or is_mbutton_down):
+                        return 1
+                    return 0
+                self._last_trigger_time = now
+
                 p_ms = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
                 cx, cy = int(p_ms.pt.x), int(p_ms.pt.y)
 
@@ -354,17 +381,13 @@ class HoverTracker:
                 self._trigger_loading_feedback(cx, cy)
 
                 # Anında farenin altındaki kelimeyi tara
-                threading.Thread(
-                    target=self._inspect_hover_area,
-                    args=(cx, cy, False),
-                    daemon=True
-                ).start()
+                self._submit_inspect_task(cx, cy, False)
 
-                if self.consume_xbutton and is_xbutton_down:
+                if self.consume_xbutton and (is_xbutton_down or is_mbutton_down):
                     return 1
 
             elif is_trigger_up:
-                if self.consume_xbutton and is_xbutton_up:
+                if self.consume_xbutton and (is_xbutton_up or is_mbutton_up):
                     return 1
 
             elif wParam == WM_MOUSEMOVE:
@@ -438,16 +461,18 @@ class HoverTracker:
             curr_x, curr_y = get_current_cursor_pos()
             now = time.time()
 
-            # 1. GetAsyncKeyState ile Çift Güvenceli Tuş Kontrolü
-            xbtn_now = is_key_down(VK_XBUTTON1) or is_key_down(VK_XBUTTON2)
-            if self.trigger_mode == "mouse_middle":
-                xbtn_now = xbtn_now or is_key_down(VK_MBUTTON)
+            # 1. GetAsyncKeyState ile Tuş Kontrolü (Kanca kapalı/başarısız ise yedek devreye girer)
+            if not self._mouse_hook:
+                xbtn_now = is_key_down(VK_XBUTTON1) or is_key_down(VK_XBUTTON2)
+                if self.trigger_mode == "mouse_middle":
+                    xbtn_now = xbtn_now or is_key_down(VK_MBUTTON)
 
-            if xbtn_now and not last_xbtn_down:
-                print(f"[Ekran Sozlugu] Yan tus algilandi (GetAsyncKeyState)! Konum: ({curr_x}, {curr_y})")
-                self._trigger_loading_feedback(curr_x, curr_y)
-                threading.Thread(target=self._inspect_hover_area, args=(curr_x, curr_y, False), daemon=True).start()
-            last_xbtn_down = xbtn_now
+                if xbtn_now and not last_xbtn_down and (now - self._last_trigger_time > 0.35):
+                    self._last_trigger_time = now
+                    print(f"[Ekran Sozlugu] Yan tus algilandi (GetAsyncKeyState)! Konum: ({curr_x}, {curr_y})")
+                    self._trigger_loading_feedback(curr_x, curr_y)
+                    self._submit_inspect_task(curr_x, curr_y, False)
+                last_xbtn_down = xbtn_now
 
             # 2. Pasif Hover (Sadece fareyi bekletme modu)
             # Eğer pasif hover kapalıysa veya sadece tuş modu seçiliyse bekleme taraması yapma
@@ -484,7 +509,7 @@ class HoverTracker:
                 if not self._scanned_this_pause and (now - self._hover_start_time) >= self.hover_delay_sec:
                     self._scanned_this_pause = True
                     self._trigger_loading_feedback(curr_x, curr_y)
-                    self._inspect_hover_area(curr_x, curr_y, is_passive_hover=True)
+                    self._submit_inspect_task(curr_x, curr_y, True)
 
     def trigger_at_current_cursor(self):
         """Manuel olarak mevcut imleç konumundaki kelimeyi tarar."""
@@ -575,14 +600,19 @@ class HoverTracker:
                 if not cleaned_word:
                     cleaned_word = target_word
 
-                print(f"[Ekran Sozlugu] Hedef kelime bulundu: '{cleaned_word}'")
-
                 screen_x1 = left + target_box["x"]
                 screen_y1 = top + target_box["y"]
                 screen_x2 = screen_x1 + target_box["w"]
                 screen_y2 = screen_y1 + target_box["h"]
 
                 self._active_word = cleaned_word
+                if is_sensitive_clipboard_text(cleaned_word):
+                    print("[Ekran Sozlugu] Hassas veri engellendi (Hover).")
+                    self._trigger_not_found_feedback(cursor_x, cursor_y)
+                    return
+
+                print("[Ekran Sozlugu] Hedef kelime bulundu.")
+
                 if is_passive_hover and self.trigger_mode not in ("mouse_side", "mouse_middle"):
                     self._active_word_screen_rect = (screen_x1, screen_y1, screen_x2, screen_y2)
                 else:
@@ -598,8 +628,7 @@ class HoverTracker:
                     print(f"Hover çeviri hatası: {e}")
                     self._trigger_not_found_feedback(cursor_x, cursor_y)
             else:
-                bulunanlar = [b['text'] for b in boxes]
-                print(f"[Ekran Sozlugu] Farenin altinda kelime bulunamadi. (Bolgedeki kelimeler: {bulunanlar})")
+                print("[Ekran Sozlugu] Farenin altinda kelime bulunamadi.")
                 self._trigger_not_found_feedback(cursor_x, cursor_y)
 
         except Exception as e:

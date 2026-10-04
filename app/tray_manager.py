@@ -14,6 +14,24 @@ try:
     import pystray
     from PIL import Image, ImageDraw
     PYSTRAY_AVAILABLE = True
+
+    # Windows üzerinde başsız (headless), sanal veya kısıtlı masaüstü oturumlarında
+    # pystray'in GetCursorPos çağrısının PermissionError (WinError 5) vermesini önle
+    if hasattr(pystray, "_win32"):
+        import pystray._win32 as _pystray_win32
+        _orig_get_cursor_pos = getattr(_pystray_win32.win32, "GetCursorPos", None)
+        if _orig_get_cursor_pos is not None:
+            def _safe_get_cursor_pos(pt_ref):
+                try:
+                    return _orig_get_cursor_pos(pt_ref)
+                except Exception:
+                    try:
+                        pt_ref._obj.x = 100
+                        pt_ref._obj.y = 100
+                    except Exception:
+                        pass
+                    return 1
+            _pystray_win32.win32.GetCursorPos = _safe_get_cursor_pos
 except ImportError:
     PYSTRAY_AVAILABLE = False
 
@@ -49,6 +67,7 @@ class TrayManager:
         on_quit: Callable[[], None],
         root: Optional[tk.Tk] = None,
         on_open_wizard: Optional[Callable[[], None]] = None,
+        post_to_ui: Optional[Callable[[Callable], None]] = None,
     ):
         self.on_show = on_show
         self.on_hide = on_hide
@@ -56,6 +75,7 @@ class TrayManager:
         self.on_quit = on_quit
         self.root = root
         self.on_open_wizard = on_open_wizard
+        self.post_to_ui = post_to_ui
         self._icon: Optional["pystray.Icon"] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -77,10 +97,14 @@ class TrayManager:
 
     def _tk_call(self, fn: Callable):
         """Tkinter thread'ine güvenli geçiş sağlar."""
-        if self.root and self.root.winfo_exists():
-            self.root.after(0, fn)
-        else:
+        if threading.current_thread() is threading.main_thread():
             fn()
+            return
+
+        if self.post_to_ui:
+            self.post_to_ui(fn)
+        else:
+            print("[TrayManager UYARI] Worker thread'den Tk çağrısı reddedildi: UI dispatcher (post_to_ui) tanımlı değil.")
 
     def _run(self):
         icon_image = _build_icon_image(64)

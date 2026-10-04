@@ -5,6 +5,11 @@ Kelime Defteri (Wordbook), Geçmiş (History) ve Çevrimdışı Önbellek (Cache
 import sqlite3
 import json
 import csv
+import os
+import sys
+import uuid
+import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, date
 from pathlib import Path
@@ -61,33 +66,94 @@ def calculate_sm2(quality: int, repetitions: int, interval_days: int, ease_facto
 
 
 class Database:
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, history_limit: int = 100):
         self.db_path = db_path or get_db_path()
+        self._lock = threading.RLock()
+        self._is_closed = False
+        self._active_operations = 0
+        self._op_condition = threading.Condition(self._lock)
+        try:
+            self.history_limit = max(1, int(history_limit)) if history_limit is not None else 100
+        except (ValueError, TypeError):
+            self.history_limit = 100
         self._init_db()
+
+    @property
+    def is_closed(self) -> bool:
+        """Veritabanının kapatılıp kapatılmadığını döner."""
+        with getattr(self, "_lock", threading.RLock()):
+            return getattr(self, "_is_closed", False)
+
+    def set_history_limit(self, limit: int):
+        """Arama geçmişi saklama üst sınırını günceller."""
+        try:
+            self.history_limit = max(1, int(limit))
+        except (ValueError, TypeError):
+            self.history_limit = 100
 
     @contextmanager
     def _get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        with getattr(self, "_lock", threading.RLock()):
+            if getattr(self, "_is_closed", False):
+                raise sqlite3.OperationalError("Veritabanı kapatılmış durumda; yeni işlem yapılamaz.")
+            self._active_operations = getattr(self, "_active_operations", 0) + 1
+
+        conn = None
         try:
+            conn = sqlite3.connect(self.db_path, timeout=5.0)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 5000;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
             yield conn
             conn.commit()
         finally:
-            conn.close()
-
-    def _init_db(self):
-        if isinstance(self.db_path, (str, Path)) and str(self.db_path) != ":memory:":
-            try:
-                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                print(f"[Ekran Sözlüğü UYARI] Veritabanı dizini oluşturulamadı ({e}). Kod klasörüne dönülüyor.")
-                self.db_path = CODE_DIR / "ekran_sozlugu.db"
+            if conn is not None:
                 try:
-                    Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+                    conn.close()
                 except Exception:
                     pass
+            with getattr(self, "_lock", threading.RLock()):
+                self._active_operations = max(0, getattr(self, "_active_operations", 1) - 1)
+                cond = getattr(self, "_op_condition", None)
+                if cond is not None:
+                    cond.notify_all()
+
+    def _quarantine_corrupt_db(self, err_msg: str):
+        """Bozuk veritabanı dosyasını ve ilişkili WAL/SHM dosyalarını karantinaya alır."""
+        if not isinstance(self.db_path, (str, Path)) or str(self.db_path) == ":memory:":
+            return
+        p = Path(self.db_path)
+        if not p.exists():
+            return
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        corrupt_target = p.with_name(f"{p.name}.corrupt.{ts}")
+        try:
+            wal_file = p.with_name(f"{p.name}-wal")
+            shm_file = p.with_name(f"{p.name}-shm")
+            if wal_file.exists():
+                try:
+                    wal_file.rename(p.with_name(f"{p.name}-wal.corrupt.{ts}"))
+                except Exception:
+                    pass
+            if shm_file.exists():
+                try:
+                    shm_file.rename(p.with_name(f"{p.name}-shm.corrupt.{ts}"))
+                except Exception:
+                    pass
+            p.rename(corrupt_target)
+            print(f"[Ekran Sözlüğü UYARI] Bozuk veritabanı karantinaya alındı ({err_msg}): {corrupt_target}")
+        except Exception as q_err:
+            print(f"[Ekran Sözlüğü HATA] Bozuk veritabanı karantinaya alınamadı: {q_err}")
+
+    def _execute_schema_creation(self):
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            if str(self.db_path) != ":memory:":
+                try:
+                    cursor.execute("PRAGMA journal_mode = WAL;")
+                except Exception as e:
+                    print(f"[Ekran Sözlüğü UYARI] WAL modu ayarlanamadı: {e}")
+
             # 1. Kelime Defteri Tablosu
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS wordbook (
@@ -144,45 +210,114 @@ class Database:
             """)
             conn.commit()
 
+    def _init_db(self):
+        if isinstance(self.db_path, (str, Path)) and str(self.db_path) != ":memory:":
+            try:
+                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                print(f"[Ekran Sözlüğü UYARI] Veritabanı dizini oluşturulamadı ({e}). Kod klasörüne dönülüyor.")
+                self.db_path = CODE_DIR / "ekran_sozlugu.db"
+                try:
+                    Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+
+        try:
+            self._execute_schema_creation()
+        except sqlite3.DatabaseError as e:
+            print(f"[Ekran Sözlüğü UYARI] Veritabanı bozulması tespit edildi ({e}). Kurtarma ve karantina başlatılıyor...")
+            self._quarantine_corrupt_db(str(e))
+            self._execute_schema_creation()
+            try:
+                self.seed_starter_words()
+            except Exception:
+                pass
+
     # --- ÖNBELLEK METOTLARI ---
     def get_cache(self, query: str) -> Optional[Dict[str, Any]]:
+        if self.is_closed:
+            return None
         clean_query = query.strip().lower()
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT result_json FROM cache WHERE query_text = ?", (clean_query,))
-            row = cursor.fetchone()
-            if row:
-                try:
-                    return json.loads(row["result_json"])
-                except Exception:
-                    return None
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT result_json FROM cache WHERE query_text = ?", (clean_query,))
+                row = cursor.fetchone()
+                if row:
+                    try:
+                        return json.loads(row["result_json"])
+                    except Exception:
+                        return None
+        except sqlite3.OperationalError:
+            if self.is_closed:
+                return None
+            raise
         return None
 
-    def set_cache(self, query: str, data: Dict[str, Any]):
+    def set_cache(self, query: str, data: Dict[str, Any]) -> bool:
+        if self.is_closed:
+            print("[Ekran Sözlüğü UYARI] Kapalı veritabanına önbellek yazma denemesi reddedildi.")
+            return False
         clean_query = query.strip().lower()
         json_data = json.dumps(data, ensure_ascii=False)
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO cache (query_text, result_json, cached_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(query_text) DO UPDATE SET
-                    result_json = excluded.result_json,
-                    cached_at = CURRENT_TIMESTAMP
-            """, (clean_query, json_data))
-            conn.commit()
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO cache (query_text, result_json, cached_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(query_text) DO UPDATE SET
+                        result_json = excluded.result_json,
+                        cached_at = CURRENT_TIMESTAMP
+                """, (clean_query, json_data))
+                conn.commit()
+                return True
+        except sqlite3.OperationalError:
+            if self.is_closed:
+                print("[Ekran Sözlüğü UYARI] Kapalı veritabanına önbellek yazma denemesi reddedildi.")
+                return False
+            raise
 
     # --- ARAMA GEÇMİŞİ METOTLARI ---
-    def add_history(self, query: str, data: Dict[str, Any]):
+    def add_history(self, query: str, data: Dict[str, Any], limit: Optional[int] = None) -> bool:
+        """
+        Yeni bir arama kaydı ekler.
+        Eğer toplam geçmiş sayısı history_limit sınırını aşarsa, YALNIZCA bu yeni kayıt
+        eklenmesi anında en eski kayıtlar temizlenir.
+        """
+        if self.is_closed:
+            print("[Ekran Sözlüğü UYARI] Kapalı veritabanına arama geçmişi yazma denemesi reddedildi.")
+            return False
         clean_query = query.strip()
         json_data = json.dumps(data, ensure_ascii=False)
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO history (query_text, result_json)
-                VALUES (?, ?)
-            """, (clean_query, json_data))
-            conn.commit()
+        eff_limit = limit if limit is not None else getattr(self, "history_limit", 100)
+        try:
+            eff_limit = max(1, int(eff_limit))
+        except (ValueError, TypeError):
+            eff_limit = 100
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO history (query_text, result_json)
+                    VALUES (?, ?)
+                """, (clean_query, json_data))
+
+                if eff_limit > 0:
+                    cursor.execute("""
+                        DELETE FROM history
+                        WHERE id NOT IN (
+                            SELECT id FROM history ORDER BY id DESC LIMIT ?
+                        )
+                    """, (eff_limit,))
+                conn.commit()
+                return True
+        except sqlite3.OperationalError:
+            if self.is_closed:
+                print("[Ekran Sözlüğü UYARI] Kapalı veritabanına arama geçmişi yazma denemesi reddedildi.")
+                return False
+            raise
 
     def get_recent_history(self, limit: int = 30) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
@@ -229,37 +364,47 @@ class Database:
             tag_label = f"[{tags.strip()}]"
             clean_notes = f"{clean_notes} {tag_label}".strip() if clean_notes else tag_label
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            # Aynı kelime var mı kontrol et
-            cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (clean_german,))
-            existing = cursor.fetchone()
-            if existing:
-                # Güncelle: Var olan kelimenin SM-2 alanları ve öğrenme geçmişi korunur!
-                cursor.execute("""
-                    UPDATE wordbook SET
-                        article = ?, plural = ?, turkish = ?, part_of_speech = ?,
-                        example_de = ?, example_tr = ?, notes = ?
-                    WHERE id = ?
-                """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, existing["id"]))
-                conn.commit()
-                return existing["id"]
-            else:
-                today_str = datetime.now().strftime("%Y-%m-%d")
-                assigned_next_review = next_review_date or today_str
-                cursor.execute("""
-                    INSERT INTO wordbook (german, article, plural, turkish, part_of_speech,
-                                          example_de, example_tr, notes, status,
-                                          ease_factor, interval_days, repetitions,
-                                          last_reviewed_at, next_review_date)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (german.strip(), article.strip(), plural.strip(), turkish.strip(),
-                      part_of_speech.strip(), example_de.strip(), example_tr.strip(),
-                      clean_notes, status,
-                      ease_factor, interval_days, repetitions,
-                      last_reviewed_at, assigned_next_review))
-                conn.commit()
-                return cursor.lastrowid
+        if self.is_closed:
+            print("[Ekran Sözlüğü UYARI] Kapalı veritabanına kelime ekleme reddedildi.")
+            return -1
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                # Aynı kelime var mı kontrol et
+                cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (clean_german,))
+                existing = cursor.fetchone()
+                if existing:
+                    # Güncelle: Var olan kelimenin SM-2 alanları ve öğrenme geçmişi korunur!
+                    cursor.execute("""
+                        UPDATE wordbook SET
+                            article = ?, plural = ?, turkish = ?, part_of_speech = ?,
+                            example_de = ?, example_tr = ?, notes = ?
+                        WHERE id = ?
+                    """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, existing["id"]))
+                    conn.commit()
+                    return existing["id"]
+                else:
+                    today_str = datetime.now().strftime("%Y-%m-%d")
+                    assigned_next_review = next_review_date or today_str
+                    cursor.execute("""
+                        INSERT INTO wordbook (german, article, plural, turkish, part_of_speech,
+                                              example_de, example_tr, notes, status,
+                                              ease_factor, interval_days, repetitions,
+                                              last_reviewed_at, next_review_date)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (german.strip(), article.strip(), plural.strip(), turkish.strip(),
+                          part_of_speech.strip(), example_de.strip(), example_tr.strip(),
+                          clean_notes, status,
+                          ease_factor, interval_days, repetitions,
+                          last_reviewed_at, assigned_next_review))
+                    conn.commit()
+                    return cursor.lastrowid
+        except sqlite3.OperationalError:
+            if self.is_closed:
+                print("[Ekran Sözlüğü UYARI] Kapalı veritabanına kelime ekleme reddedildi.")
+                return -1
+            raise
 
     def seed_starter_words(self) -> int:
         """Yeni başlayan kullanıcılar için temel kelimeleri deftere ekler (defter boşsa)."""
@@ -504,3 +649,79 @@ class Database:
                 "learning": total_words - learned_words,
                 "reviewed": total_words - new_words
             }
+
+    def backup(self, target_path: Union[str, Path]) -> bool:
+        """
+        Canlı veritabanını hedef konuma SQLite Backup API ile atomik ve güvenli yedekler.
+        Bütünlük kontrolü (PRAGMA integrity_check) başarılı olursa True döner.
+        """
+        target = Path(target_path).resolve()
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            unique_suffix = f"tmp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            tmp_target = target.with_name(f"{target.stem}.{unique_suffix}{target.suffix}")
+
+            with self._get_connection() as src_conn:
+                dst_conn = sqlite3.connect(str(tmp_target))
+                try:
+                    src_conn.backup(dst_conn)
+                    cur = dst_conn.cursor()
+                    cur.execute("PRAGMA integrity_check;")
+                    check = cur.fetchone()
+                    if not check or check[0] != "ok":
+                        raise sqlite3.DatabaseError(f"Yedek bütünlük doğrulaması başarısız: {check}")
+                finally:
+                    dst_conn.close()
+
+            os.replace(tmp_target, target)
+            return True
+        except Exception as e:
+            print(f"[Ekran Sözlüğü HATA] Veritabanı yedeği alınamadı ({target}): {e}")
+            if 'tmp_target' in locals() and tmp_target.exists():
+                try:
+                    tmp_target.unlink()
+                except Exception:
+                    pass
+            return False
+
+    def close(self, timeout: float = 3.0) -> bool:
+        """
+        Veritabanını güvenle kapatır.
+        Aktif veritabanı işlemleri (yazma/okuma) varsa tamamlanmalarını timeout süresince bekler.
+        İşlemler tamamlandıktan sonra veritabanını kapatır ve WAL modundaki bekleyen yazmaları diske temizler (checkpoint).
+        Tüm işlemler güvenle tamamlanıp kapatıldıysa True, süre aşımı olduysa False döner.
+        """
+        with getattr(self, "_lock", threading.RLock()):
+            if getattr(self, "_is_closed", False):
+                return True
+            end_time = time.monotonic() + max(0.1, timeout)
+            cond = getattr(self, "_op_condition", None)
+            while getattr(self, "_active_operations", 0) > 0:
+                rem = end_time - time.monotonic()
+                if rem <= 0:
+                    break
+                if cond is not None:
+                    cond.wait(timeout=rem)
+                else:
+                    break
+
+            if getattr(self, "_active_operations", 0) == 0:
+                self._is_closed = True
+                all_finished = True
+            else:
+                all_finished = False
+
+        if all_finished and isinstance(self.db_path, (str, Path)) and str(self.db_path) != ":memory:":
+            conn = None
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=5.0)
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception as e:
+                print(f"[Ekran Sözlüğü UYARI] Veritabanı kapatma checkpoint hatası: {e}")
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        return all_finished

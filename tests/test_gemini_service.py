@@ -6,6 +6,7 @@ from unittest.mock import patch, MagicMock
 import urllib.error
 import io
 import json
+import time
 from app.gemini_service import GeminiService
 
 
@@ -68,10 +69,12 @@ class TestGeminiService(unittest.TestCase):
         self.assertIn("Bağlantı Kurulamadı", msg)
 
     def test_model_selection(self):
-        svc = GeminiService("AIzaSyTestKey12345", model="gemini-1.5-flash")
-        self.assertEqual(svc.model, "gemini-1.5-flash")
-        svc.set_model("gemini-2.0-flash")
-        self.assertEqual(svc.model, "gemini-2.0-flash")
+        default_svc = GeminiService("AIzaSyTestKey12345")
+        self.assertEqual(default_svc.model, "gemini-3.5-flash-lite")
+        svc = GeminiService("AIzaSyTestKey12345", model="gemini-3.5-flash-lite")
+        self.assertEqual(svc.model, "gemini-3.5-flash-lite")
+        svc.set_model("gemini-3.8-flash")
+        self.assertEqual(svc.model, "gemini-3.8-flash")
 
     @patch("urllib.request.urlopen")
     def test_translate_and_analyze_success(self, mock_urlopen):
@@ -114,6 +117,41 @@ class TestGeminiService(unittest.TestCase):
         svc = GeminiService("")
         res = svc.translate_and_analyze("Buch")
         self.assertIsNone(res)
+
+    @patch("urllib.request.urlopen")
+    def test_call_gemini_api_respects_deadline(self, mock_urlopen):
+        """Zaman bütçesi dolduğunda model deneme döngüsünün kesildiğini doğrular."""
+        # İlk çağrıda 503 HTTP hatası dönsün
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "url", 503, "Service Unavailable", {}, io.BytesIO(b'{"error":{"message":"overloaded"}}')
+        )
+        svc = GeminiService("AIzaSyTestKey12345")
+        # Süresi dolmuş veya dolmak üzere olan deadline
+        expired_deadline = time.monotonic() + 0.05
+        res = svc._call_gemini_api("test", deadline=expired_deadline)
+        self.assertIsNone(res)
+        # Sadece 1 model denendikten sonra süre bittiği için döngüden çıkmalı, tüm modellere istek yapmamalı
+        self.assertLessEqual(mock_urlopen.call_count, 1)
+
+    @patch("urllib.request.urlopen")
+    def test_generate_explanation_respects_deadline(self, mock_urlopen):
+        """Açıklama üretiminde deadline parametresinin aktarıldığını doğrular."""
+        mock_payload = {
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Grammar explanation note."}]
+                }
+            }]
+        }
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(mock_payload).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        svc = GeminiService("AIzaSyTestKey12345")
+        deadline = time.monotonic() + 3.0
+        res = svc.generate_explanation("laufen", deadline=deadline)
+        self.assertEqual(res, "Grammar explanation note.")
+        self.assertTrue(mock_urlopen.called)
 
 
 if __name__ == "__main__":

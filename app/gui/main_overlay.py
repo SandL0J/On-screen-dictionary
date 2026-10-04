@@ -6,6 +6,7 @@ hızlı arama, ekran kırpma (OCR), genel kısayollar (Alt+X, Alt+H, Alt+C) ve k
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import queue
 from typing import Callable, Optional
 
 from app.gui.result_hud import ResultHUD
@@ -17,6 +18,8 @@ from app.gui.onboarding_wizard import OnboardingWizard
 from app.hover_tracker import HoverTracker
 from app.hotkey_manager import HotkeyManager, format_hotkey
 from app.clipboard_watcher import get_clipboard_text, copy_selected_text_windows
+from app.security import check_sensitive_clipboard
+from app.worker_pool import WorkerThreadPool
 
 
 class MainOverlay:
@@ -55,7 +58,21 @@ class MainOverlay:
         self.clipboard_watcher = resolved_clip
         self.config = resolved_config or {}
 
+        worker_pool = kwargs.pop("worker_pool", None)
+        self._worker_pool = worker_pool or WorkerThreadPool(max_workers=4, thread_name_prefix="EkranSozlugu-Worker")
+
         self._is_bar_visible = True
+        self._is_stopped = False
+        self._ui_queue: queue.Queue = queue.Queue()
+        self._ui_poll_id: Optional[str] = None
+        self._poll_interval_ms: int = 15
+        self._onboarding_after_id: Optional[str] = None
+        self._after_ids: set = set()
+        self._lookup_generation: int = 0
+        self._lookup_lock = threading.Lock()
+
+        # Tk ana iş parçacığı periyodik kuyruk dinleyicisini başlat
+        self._schedule_ui_queue_poll()
 
         self.root.title("Ekran Sözlüğü • Almanca Asistanı")
         self.root.overrideredirect(True)  # Kenarlıksız modern çubuk
@@ -63,53 +80,37 @@ class MainOverlay:
         self.root.attributes("-alpha", 0.96)
 
         # Snipper başlatıcı
-        self.snipper = ScreenSnipper(self.root, self.ocr, self.lookup_text)
+        self.snipper = ScreenSnipper(self.root, self.ocr, self.lookup_text, post_to_ui=self.post_to_ui, worker_pool=self._worker_pool)
 
         # Canlı Hover Tooltip ve Takipçisi (İş parçacığı güvenli sarmalayıcılar ile)
         self.hover_tooltip = HoverTooltip(
             self.root,
             db=self.db,
-            auto_hide_seconds=self.config.get("hover_auto_hide_seconds", 5)
+            auto_hide_seconds=self.config.get("hover_auto_hide_seconds", 5),
+            post_to_ui=self.post_to_ui
         )
 
         def _safe_hover_show(word_data, x, y):
-            try:
-                if self.root.winfo_exists():
-                    self.root.after(0, lambda: self.hover_tooltip.show(word_data, x, y))
-            except Exception:
-                pass
+            self.post_to_ui(self.hover_tooltip.show, word_data, x, y)
 
         def _safe_hover_hide():
-            try:
-                # Hover modu kapatıldıysa kutucuğu kesinlikle gizle
-                if hasattr(self, "hover_tracker") and not self.hover_tracker.is_enabled():
-                    if hasattr(self, "hover_tooltip"):
-                        self.hover_tooltip.hide()
-                    return
-                # Yan tuş ve orta tuş modlarında fare hareketi kutucuğu kapatmaz.
-                # Otomatik kapanma süresi (hover_auto_hide_seconds) veya kullanıcı [✕] ile kapatır.
-                if hasattr(self, "hover_tracker") and self.hover_tracker.trigger_mode in ("mouse_side", "mouse_middle"):
-                    return
-                if hasattr(self, "hover_tooltip") and (self.hover_tooltip.has_active_auto_hide() or self.hover_tooltip.auto_hide_seconds == 0):
-                    return
-                if self.root.winfo_exists():
-                    self.root.after(0, lambda: self.hover_tooltip.hide())
-            except Exception:
-                pass
+            # Hover modu kapatıldıysa kutucuğu kesinlikle gizle
+            if hasattr(self, "hover_tracker") and not self.hover_tracker.is_enabled():
+                self.post_to_ui(self.hover_tooltip.hide)
+                return
+            # Yan tuş ve orta tuş modlarında fare hareketi kutucuğu kapatmaz.
+            # Otomatik kapanma süresi (hover_auto_hide_seconds) veya kullanıcı [✕] ile kapatır.
+            if hasattr(self, "hover_tracker") and self.hover_tracker.trigger_mode in ("mouse_side", "mouse_middle"):
+                return
+            if hasattr(self, "hover_tooltip") and (self.hover_tooltip.has_active_auto_hide() or self.hover_tooltip.auto_hide_seconds == 0):
+                return
+            self.post_to_ui(self.hover_tooltip.hide)
 
         def _safe_hover_loading(x, y):
-            try:
-                if self.root.winfo_exists():
-                    self.root.after(0, lambda: self.hover_tooltip.show_loading(x, y))
-            except Exception:
-                pass
+            self.post_to_ui(self.hover_tooltip.show_loading, x, y)
 
         def _safe_hover_not_found(x, y):
-            try:
-                if self.root.winfo_exists():
-                    self.root.after(0, lambda: self.hover_tooltip.show_message(x, y, "⚠️ Kelime bulunamadı", auto_hide_ms=1300))
-            except Exception:
-                pass
+            self.post_to_ui(self.hover_tooltip.show_message, x, y, "⚠️ Kelime bulunamadı", 1300)
 
         self.hover_tracker = HoverTracker(
             ocr_engine=self.ocr,
@@ -121,6 +122,7 @@ class MainOverlay:
             hover_delay_ms=self.config.get("hover_delay_ms", 300),
             trigger_mode=self.config.get("hover_trigger_mode", "mouse_side"),
             enabled=self.config.get("hover_enabled", True),
+            worker_pool=self._worker_pool,
         )
         self.hover_tracker.start()
 
@@ -132,7 +134,8 @@ class MainOverlay:
         # İlk çalıştırma sihirbazı
         if not self.config.get("first_run_completed", False):
             try:
-                self.root.after(450, self._open_onboarding_wizard)
+                self._onboarding_after_id = self.root.after(450, self._open_onboarding_wizard)
+                self._after_ids.add(self._onboarding_after_id)
             except Exception:
                 pass
 
@@ -151,24 +154,24 @@ class MainOverlay:
 
         # Güvenli kısayol kaydı: yapılandırmadaki tuş geçersizse varsayılana dön
         try:
-            self.hotkey_mgr.register("ocr", hotkey_ocr, lambda: self.root.after(0, self._trigger_ocr_hotkey))
+            self.hotkey_mgr.register("ocr", hotkey_ocr, lambda: self.post_to_ui(self._trigger_ocr_hotkey))
         except Exception:
-            self.hotkey_mgr.register("ocr", "tab+space", lambda: self.root.after(0, self._trigger_ocr_hotkey))
+            self.hotkey_mgr.register("ocr", "tab+space", lambda: self.post_to_ui(self._trigger_ocr_hotkey))
 
         try:
-            self.hotkey_mgr.register("hover", hotkey_hover, lambda: self.root.after(0, self._toggle_hover))
+            self.hotkey_mgr.register("hover", hotkey_hover, lambda: self.post_to_ui(self._toggle_hover))
         except Exception:
-            self.hotkey_mgr.register("hover", "alt+v", lambda: self.root.after(0, self._toggle_hover))
+            self.hotkey_mgr.register("hover", "alt+v", lambda: self.post_to_ui(self._toggle_hover))
 
         try:
-            self.hotkey_mgr.register("overlay", hotkey_overlay, lambda: self.root.after(0, self._toggle_bar_visibility))
+            self.hotkey_mgr.register("overlay", hotkey_overlay, lambda: self.post_to_ui(self._toggle_bar_visibility))
         except Exception:
-            self.hotkey_mgr.register("overlay", "alt+h", lambda: self.root.after(0, self._toggle_bar_visibility))
+            self.hotkey_mgr.register("overlay", "alt+h", lambda: self.post_to_ui(self._toggle_bar_visibility))
 
         try:
-            self.hotkey_mgr.register("clipboard", hotkey_clipboard, lambda: self.root.after(0, self._lookup_from_clipboard))
+            self.hotkey_mgr.register("clipboard", hotkey_clipboard, lambda: self.post_to_ui(self._lookup_from_clipboard))
         except Exception:
-            self.hotkey_mgr.register("clipboard", "alt+c", lambda: self.root.after(0, self._lookup_from_clipboard))
+            self.hotkey_mgr.register("clipboard", "alt+c", lambda: self.post_to_ui(self._lookup_from_clipboard))
 
     def _trigger_ocr_hotkey(self):
         """Kısayol basıldığında pencereyi görünür yapıp öne getirir ve OCR kırpıcıyı açar."""
@@ -204,7 +207,7 @@ class MainOverlay:
         self.drag_grip.pack(side="left", padx=(2, 6))
 
         # 2. Hızlı Arama Kutusu
-        self.search_var = tk.StringVar()
+        self.search_var = tk.StringVar(master=self.root)
         self.search_entry = tk.Entry(
             self.bar_frame,
             textvariable=self.search_var,
@@ -240,7 +243,7 @@ class MainOverlay:
         self.btn_snip.pack(side="left", padx=(0, 4))
 
         # 4. Pano Dinleme Aç/Kapa Butonu
-        clip_active = self.clipboard_watcher.is_enabled()
+        clip_active = self.clipboard_watcher.is_enabled() if self.clipboard_watcher else self.config.get("clipboard_auto_lookup", False)
         self.btn_clip = tk.Button(
             self.bar_frame,
             text="📋 Pano: AÇIK" if clip_active else "📋 Pano: KAPALI",
@@ -368,22 +371,114 @@ class MainOverlay:
             self.lookup_text(text)
             self.search_entry.select_range(0, tk.END)
 
-    def _safe_after(self, ms: int, func: Callable, *args):
-        """Thread-safe UI zamanlayıcı/çağırıcı."""
+    def _schedule_ui_queue_poll(self):
+        if self._is_stopped:
+            return
         try:
-            if threading.current_thread() is threading.main_thread():
-                if self.root.winfo_exists():
-                    self.root.after(ms, func, *args)
-                else:
-                    func(*args)
-            else:
-                # Arka plan iş parçacığından çağrılıyorsa doğrudan çalıştır
-                func(*args)
+            if hasattr(self, "root") and self.root and self.root.winfo_exists():
+                # Varsa eski bekleyen zamanlayıcıyı iptal et
+                if self._ui_poll_id is not None:
+                    try:
+                        self.root.after_cancel(self._ui_poll_id)
+                    except Exception:
+                        pass
+                    if hasattr(self, "_after_ids"):
+                        self._after_ids.discard(self._ui_poll_id)
+                    self._ui_poll_id = None
+
+                poll_timer_id = None
+
+                def _poller_callback():
+                    # Callback yalnızca kendi zamanlayıcı kimliğini temizler
+                    if hasattr(self, "_after_ids") and poll_timer_id in self._after_ids:
+                        self._after_ids.discard(poll_timer_id)
+                    if self._ui_poll_id == poll_timer_id:
+                        self._ui_poll_id = None
+                    if not self._is_stopped:
+                        self._poll_ui_queue()
+
+                poll_timer_id = self.root.after(self._poll_interval_ms, _poller_callback)
+                self._ui_poll_id = poll_timer_id
+                if hasattr(self, "_after_ids"):
+                    self._after_ids.add(poll_timer_id)
         except Exception:
+            pass
+
+    def _poll_ui_queue(self):
+        """Kuyruktaki arka plan UI görevlerini YALNIZCA Tk ana iş parçacığında çalıştırır."""
+        # Doğrudan veya manuel çağrılarda bekleyen zamanlayıcıyı iptal et (zombi timer oluşmasını engeller)
+        if self._ui_poll_id is not None:
             try:
-                func(*args)
+                self.root.after_cancel(self._ui_poll_id)
             except Exception:
                 pass
+            if hasattr(self, "_after_ids"):
+                self._after_ids.discard(self._ui_poll_id)
+            self._ui_poll_id = None
+
+        if self._is_stopped:
+            return
+
+        while not self._ui_queue.empty():
+            if self._is_stopped:
+                break
+            try:
+                item = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                func, args = item
+                if not self._is_stopped:
+                    func(*args)
+            except Exception as e:
+                print(f"[UI Kuyruk Hatası]: {e}")
+
+        if not self._is_stopped:
+            self._schedule_ui_queue_poll()
+
+    def post_to_ui(self, func: Callable, *args):
+        """Worker iş parçacıklarından gelen UI görevlerini thread-safe kuyruğa ekler."""
+        if not self._is_stopped:
+            self._ui_queue.put((func, args))
+
+    def _safe_after(self, ms: int, func: Callable, *args):
+        """
+        Thread-safe UI zamanlayıcı/çağırıcı.
+        Arka plan iş parçacığından çağrıldığında asla doğrudan func(*args) veya Tk işlemi
+        çalıştırmaz; görevi iş parçacığı güvenli _ui_queue kuyruğuna aktarır.
+        Tk ana iş parçacığında ise iptal edilebilir after() zamanlayıcısı ile planlar.
+        """
+        if self._is_stopped:
+            return None
+
+        if threading.current_thread() is not threading.main_thread():
+            # Arka plan iş parçacığı: Yalnızca kuyruğa ekle, Tk metodlarına ASLA dokunma
+            self.post_to_ui(func, *args)
+            return None
+
+        # Tk ana iş parçacığı
+        try:
+            if hasattr(self, "root") and self.root and self.root.winfo_exists():
+                after_id = None
+                def _wrapper():
+                    if hasattr(self, "_after_ids") and after_id in self._after_ids:
+                        self._after_ids.discard(after_id)
+                    if not self._is_stopped:
+                        func(*args)
+
+                after_id = self.root.after(ms, _wrapper)
+                if hasattr(self, "_after_ids"):
+                    self._after_ids.add(after_id)
+                return after_id
+            elif not self._is_stopped:
+                func(*args)
+        except Exception:
+            if not self._is_stopped:
+                try:
+                    func(*args)
+                except Exception:
+                    pass
+        return None
 
     def _lookup_from_clipboard(self):
         """
@@ -391,17 +486,37 @@ class MainOverlay:
         Kullanıcı bir kelimeyi fareyle seçip Alt+C'ye bastığında otomatik kopyalar ve çevirir.
         Eğer hem seçim hem de pano boşsa kullanıcıya bilgilendirici bir uyarı kartı gösterir.
         """
+        if self._is_stopped:
+            return None
+
         def _worker():
+            if self._is_stopped:
+                return
             # 1. Önce aktif pencerede kullanıcının seçili tuttuğu metni kopyalamayı dene
             txt = copy_selected_text_windows(timeout_ms=100)
             if not txt or not txt.strip():
                 # Kopyalama yeni bir metin getirmediyse mevcut panoya bak
                 txt = get_clipboard_text()
 
+            if self._is_stopped:
+                return
+
             if txt and txt.strip():
                 clean_text = txt.strip()
                 if self.clipboard_watcher:
                     self.clipboard_watcher._last_text = clean_text
+
+                # Hassas veri kontrolü (parola, API anahtarı, token, IBAN, kart vb.)
+                is_sens, reason = check_sensitive_clipboard(clean_text)
+                if is_sens:
+                    sensitive_msg = {
+                        "error": f"🛡️ Güvenlik Koruması:\n"
+                                 f"Kopyalanan metin hassas veri ({reason}) kalıbı "
+                                 f"içerdiği için otomatik çeviriye gönderilmedi."
+                    }
+                    self._safe_after(0, lambda: self._show_hud(sensitive_msg))
+                    return
+
                 self._safe_after(0, lambda: self.lookup_text(clean_text))
             else:
                 # Pano ve seçim boşsa kullanıcıya net görsel geri bildirim ver
@@ -412,9 +527,7 @@ class MainOverlay:
                 }
                 self._safe_after(0, lambda: self._show_hud(empty_msg))
 
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        return t
+        return self._worker_pool.submit(_worker)
 
     def _toggle_bar_visibility(self):
         """Alt+H veya gizle butonuna basıldığında çubuğu gizler / gösterir."""
@@ -441,31 +554,117 @@ class MainOverlay:
             pass
 
     def stop(self):
-        """Temiz kapatma."""
-        if hasattr(self, "hotkey_mgr"):
-            self.hotkey_mgr.stop()
-        if hasattr(self, "clipboard_watcher"):
-            self.clipboard_watcher.stop()
-        if hasattr(self, "hover_tracker"):
-            self.hover_tracker.stop()
-        if hasattr(self, "hover_tooltip"):
-            self.hover_tooltip.hide()
+        """Temiz kapatma: zamanlayıcıları iptal eder, kuyruğu boşaltır ve hook'ları durdurur."""
+        self._is_stopped = True
+
+        # Worker havuzunu kapat ve yeni iş kabulünü derhal durdur
+        if hasattr(self, "_worker_pool") and self._worker_pool:
+            try:
+                self._worker_pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+
+        # Poller zamanlayıcısını iptal et
+        if self._ui_poll_id:
+            try:
+                self.root.after_cancel(self._ui_poll_id)
+            except Exception:
+                pass
+            if hasattr(self, "_after_ids"):
+                self._after_ids.discard(self._ui_poll_id)
+            self._ui_poll_id = None
+
+        # Kuyruğu boşalt ve geç kalan iş parçacığı sonuçlarının UI'ya dokunmasını engelle
+        while not self._ui_queue.empty():
+            try:
+                self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        # Onboarding zamanlayıcısını iptal et
+        if hasattr(self, "_onboarding_after_id") and self._onboarding_after_id:
+            try:
+                self.root.after_cancel(self._onboarding_after_id)
+            except Exception:
+                pass
+            if hasattr(self, "_after_ids"):
+                self._after_ids.discard(self._onboarding_after_id)
+            self._onboarding_after_id = None
+
+        # Kalan tüm planlanmış UI zamanlayıcılarını iptal et
+        if hasattr(self, "_after_ids"):
+            for aid in list(self._after_ids):
+                try:
+                    self.root.after_cancel(aid)
+                except Exception:
+                    pass
+            self._after_ids.clear()
+
+        if getattr(self, "hotkey_mgr", None):
+            try:
+                self.hotkey_mgr.stop()
+            except Exception:
+                pass
+        if getattr(self, "clipboard_watcher", None):
+            try:
+                self.clipboard_watcher.stop()
+            except Exception:
+                pass
+        if getattr(self, "hover_tracker", None):
+            try:
+                self.hover_tracker.stop()
+            except Exception:
+                pass
+        if getattr(self, "hover_tooltip", None):
+            try:
+                self.hover_tooltip.hide()
+            except Exception:
+                pass
 
     def lookup_text(self, text: str):
-        """Metni çevirir ve HUD kartında gösterir."""
+        """
+        Metni çevirir ve HUD kartında gösterir.
+        İstek kimliği (Generation ID) mekanizması ile geciken eski sorguların
+        daha yeni bir aramanın sonucunun üstüne yazması engellenir.
+        Arama nesli kontrolü ve HUD çizimi yarış durumu (race condition) olmadan kilit altında uygulanır.
+        """
         if not text or not text.strip():
             return None
+
+        # Hassas veri kontrolü (OCR snip ve doğrudan aramalarda veri sızıntısını engeller)
+        is_sens, reason = check_sensitive_clipboard(text)
+        if is_sens:
+            sensitive_msg = {
+                "error": f"🛡️ Güvenlik Koruması:\n"
+                         f"Metin hassas veri ({reason}) kalıbı "
+                         f"içerdiği için çeviriye gönderilmedi."
+            }
+            self._safe_after(0, lambda: self._show_hud(sensitive_msg))
+            return None
+
+        with self._lookup_lock:
+            if self._is_stopped:
+                return None
+            self._lookup_generation += 1
+            gen_id = self._lookup_generation
 
         def _worker():
             try:
                 res = self.translator.translate_and_analyze(text)
-                self._safe_after(0, lambda: self._show_hud(res))
+                def _ui_dispatch():
+                    with self._lookup_lock:
+                        if self._is_stopped:
+                            return
+                        if gen_id != self._lookup_generation:
+                            # Daha yeni bir arama başlatılmış; eski geciken sonucu yoksay
+                            return
+                        self._show_hud(res)
+
+                self._safe_after(0, _ui_dispatch)
             except Exception as e:
                 print(f"Çeviri hatası: {e}")
 
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        return t
+        return self._worker_pool.submit(_worker)
 
     def _show_hud(self, result_data: dict):
         ResultHUD.show_result(
@@ -482,6 +681,8 @@ class MainOverlay:
         new_state = not self.clipboard_watcher.is_enabled()
         self.clipboard_watcher.set_enabled(new_state)
         self.config["clipboard_auto_lookup"] = new_state
+        from app.config import save_config
+        save_config(self.config)
         self.btn_clip.configure(
             text="📋 Pano: AÇIK" if new_state else "📋 Pano: KAPALI",
             bg="#059669" if new_state else "#52525b"
@@ -502,10 +703,28 @@ class MainOverlay:
             self.hover_tooltip.hide()
 
     def _open_wordbook(self):
-        WordbookWindow(self.root, self.db)
+        if getattr(self, "_wordbook_window", None) and hasattr(self._wordbook_window, "window"):
+            try:
+                if self._wordbook_window.window.winfo_exists():
+                    self._wordbook_window.window.deiconify()
+                    self._wordbook_window.window.lift()
+                    self._wordbook_window.window.focus_force()
+                    return
+            except Exception:
+                pass
+        self._wordbook_window = WordbookWindow(self.root, self.db)
 
     def _open_settings(self):
-        SettingsWindow(
+        if getattr(self, "_settings_window", None) and hasattr(self._settings_window, "window"):
+            try:
+                if self._settings_window.window.winfo_exists():
+                    self._settings_window.window.deiconify()
+                    self._settings_window.window.lift()
+                    self._settings_window.window.focus_force()
+                    return
+            except Exception:
+                pass
+        self._settings_window = SettingsWindow(
             self.root,
             self.config,
             self._apply_settings,
@@ -515,7 +734,25 @@ class MainOverlay:
 
     def _open_onboarding_wizard(self):
         """İlk çalıştırma veya başlangıç rehberi sihirbazını açar."""
-        OnboardingWizard(
+        if hasattr(self, "_onboarding_after_id") and self._onboarding_after_id:
+            if hasattr(self, "_after_ids"):
+                self._after_ids.discard(self._onboarding_after_id)
+            self._onboarding_after_id = None
+
+        if self._is_stopped:
+            return
+
+        if getattr(self, "_wizard_window", None) and hasattr(self._wizard_window, "window"):
+            try:
+                if self._wizard_window.window.winfo_exists():
+                    self._wizard_window.window.deiconify()
+                    self._wizard_window.window.lift()
+                    self._wizard_window.window.focus_force()
+                    return
+            except Exception:
+                pass
+
+        self._wizard_window = OnboardingWizard(
             parent=self.root,
             config=self.config,
             ocr_engine=self.ocr,
@@ -531,12 +768,14 @@ class MainOverlay:
     def _apply_settings(self, new_config: dict):
         self.config = new_config
         self.root.attributes("-topmost", self.config.get("always_on_top", True))
-        clip_on = self.config.get("clipboard_auto_lookup", True)
+        clip_on = self.config.get("clipboard_auto_lookup", False)
         self.clipboard_watcher.set_enabled(clip_on)
         self.btn_clip.configure(
             text="📋 Pano: AÇIK" if clip_on else "📋 Pano: KAPALI",
             bg="#059669" if clip_on else "#52525b"
         )
+        if hasattr(self.db, "set_history_limit") and "history_limit" in new_config:
+            self.db.set_history_limit(new_config["history_limit"])
 
         hover_on = self.config.get("hover_enabled", True)
         self.hover_tracker.update_settings(
@@ -570,7 +809,7 @@ class MainOverlay:
             self.translator.set_gemini_key(new_config["gemini_api_key"])
         self.translator.set_gemini_options(
             new_config.get("use_gemini_direct", False),
-            new_config.get("gemini_model", "gemini-1.5-flash")
+            new_config.get("gemini_model", "gemini-3.5-flash-lite")
         )
 
     def _set_initial_position(self):
