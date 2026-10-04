@@ -233,7 +233,8 @@ class TestSensitiveClipboardFilter(unittest.TestCase):
                 with patch("app.gui.main_overlay.get_clipboard_text", return_value="Meine IBAN: TR330006100519789012345678"):
                     thread = overlay._lookup_from_clipboard()
                     if thread:
-                        thread.join(timeout=1.0)
+                        thread.join(timeout=2.0)
+                    overlay._poll_ui_queue()
                     root.update()
 
             # lookup_text asla çağrılmamalıdır
