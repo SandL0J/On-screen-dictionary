@@ -27,9 +27,9 @@ import app.database
 class TestPathsAndMigration(unittest.TestCase):
     def setUp(self):
         self.original_env = os.environ.copy()
-        self.temp_test_dir = tempfile.mkdtemp(prefix="test_paths_suite_")
-        self.data_dir = Path(self.temp_test_dir) / "data"
-        self.legacy_dir = Path(self.temp_test_dir) / "legacy"
+        self.temp_test_dir = Path(tempfile.mkdtemp(prefix="test_paths_suite_")).resolve()
+        self.data_dir = self.temp_test_dir / "data"
+        self.legacy_dir = self.temp_test_dir / "legacy"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.legacy_dir.mkdir(parents=True, exist_ok=True)
         os.environ["EKRAN_SOZLUGU_DATA_DIR"] = str(self.data_dir)
@@ -367,7 +367,7 @@ class TestPathsAndMigration(unittest.TestCase):
         orig_install = app.paths._atomic_install_exclusive
 
         def hook_install(tmp, dst):
-            if dst == dst_db:
+            if dst.resolve() == dst_db.resolve() or dst.name == "ekran_sozlugu.db":
                 # Yarış durumunu simüle et: tam bu anda başka bir süreç/iş parçacığı hedefe sentinel yazdı!
                 conn_sentinel = sqlite3.connect(str(dst_db))
                 conn_sentinel.execute("CREATE TABLE sentinel (data TEXT);")
@@ -408,7 +408,7 @@ class TestPathsAndMigration(unittest.TestCase):
         orig_install = app.paths._atomic_install_exclusive
 
         def hook_install(tmp, dst):
-            if dst == dst_cfg:
+            if dst.resolve() == dst_cfg.resolve() or dst.name == "config.json":
                 # Yarış durumunu simüle et: tam bu anda başka bir süreç hedefe sentinel config yazdı!
                 dst_cfg.write_text('{"theme": "sentinel_preserved"}', encoding="utf-8")
             return orig_install(tmp, dst)
