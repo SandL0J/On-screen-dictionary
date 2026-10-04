@@ -7,7 +7,7 @@ Video altyazısının kaybolmaması için seçim başladığı an anlık ekran g
 import tkinter as tk
 from PIL import Image, ImageGrab
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 import ctypes
 from app.hover_tracker import capture_screen_rect_gdi
 
@@ -21,10 +21,19 @@ except Exception:
 
 
 class ScreenSnipper:
-    def __init__(self, root: tk.Tk, ocr_engine, on_text_extracted: Callable[[str], None]):
+    def __init__(
+        self,
+        root: tk.Tk,
+        ocr_engine,
+        on_text_extracted: Callable[[str], None],
+        post_to_ui: Optional[Callable[[Callable], None]] = None,
+        worker_pool: Optional[Any] = None
+    ):
         self.root = root
         self.ocr_engine = ocr_engine
         self.on_text_extracted = on_text_extracted
+        self.post_to_ui = post_to_ui
+        self.worker_pool = worker_pool
 
         self.overlay: Optional[tk.Toplevel] = None
         self.canvas: Optional[tk.Canvas] = None
@@ -34,25 +43,47 @@ class ScreenSnipper:
         self.text_id = None
         self._screenshot: Optional[Image.Image] = None
 
+    def _dispatch_to_ui(self, fn: Callable):
+        """Worker thread'den Tk ana thread'ine görev aktarır."""
+        if threading.current_thread() is threading.main_thread():
+            fn()
+            return
+
+        if self.post_to_ui:
+            self.post_to_ui(fn)
+        else:
+            print("[ScreenSnipper UYARI] Worker thread'den Tk çağrısı reddedildi: UI dispatcher (post_to_ui) tanımlı değil.")
+
     def start_selection(self):
         """Ekran seçim modunu başlatır. Altyazı kaybolmasın diye ekranı o an dondurur."""
         if self.overlay and self.overlay.winfo_exists():
             return
 
-        # 1. Altyazının geçmesini önlemek için anında ekran görüntüsü yakala
+        # 1. Altyazının geçmesini önlemek için anında ekran görüntüsü yakala (tüm ekranlar)
         try:
-            sw = ctypes.windll.user32.GetSystemMetrics(0)
-            sh = ctypes.windll.user32.GetSystemMetrics(1)
-            self._screenshot = capture_screen_rect_gdi(0, 0, sw, sh)
+            user32 = ctypes.windll.user32
+            vx = user32.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+            vy = user32.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
+            vw = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            vh = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+            if vw <= 0 or vh <= 0:
+                vx, vy = 0, 0
+                vw = user32.GetSystemMetrics(0)
+                vh = user32.GetSystemMetrics(1)
+            self._virtual_origin = (vx, vy)
+            self._screenshot = capture_screen_rect_gdi(vx, vy, vw, vh)
             if self._screenshot is None:
                 self._screenshot = ImageGrab.grab(all_screens=True)
         except Exception as e:
             print(f"Ön ekran yakalama uyarısı: {e}")
             self._screenshot = None
+            vx, vy, vw, vh = 0, 0, 1920, 1080
+            self._virtual_origin = (0, 0)
 
-        # 2. Karartmalı seçim penceresini aç
+        # 2. Karartmalı seçim penceresini aç (tüm sanal masaüstünü kapla)
         self.overlay = tk.Toplevel(self.root)
-        self.overlay.attributes("-fullscreen", True)
+        self.overlay.overrideredirect(True)
+        self.overlay.geometry(f"{vw}x{vh}+{vx}+{vy}")
         self.overlay.attributes("-topmost", True)
         self.overlay.attributes("-alpha", 0.28)  # Yarı saydam kararık ekran
         self.overlay.configure(bg="#000000", cursor="crosshair")
@@ -61,9 +92,9 @@ class ScreenSnipper:
         self.canvas.pack(fill="both", expand=True)
 
         # Bilgilendirme etiketi
-        sw = self.overlay.winfo_screenwidth()
+        label_x = vw // 2
         self.canvas.create_text(
-            sw // 2, 40,
+            label_x, 40,
             text="✂ Çevirmek istediğiniz Almanca kelimeyi veya altyazıyı seçin (İptal: ESC / Sağ Tık)",
             fill="#ffffff",
             font=("Segoe UI", 12, "bold")
@@ -73,8 +104,15 @@ class ScreenSnipper:
         self.canvas.bind("<ButtonPress-1>", self._on_button_press)
         self.canvas.bind("<B1-Motion>", self._on_move_press)
         self.canvas.bind("<ButtonRelease-1>", self._on_button_release)
+        self.canvas.bind("<Escape>", lambda e: self._cancel())
+        self.canvas.bind("<Button-3>", lambda e: self._cancel())
         self.overlay.bind("<Escape>", lambda e: self._cancel())
         self.overlay.bind("<Button-3>", lambda e: self._cancel())
+        try:
+            self.overlay.focus_force()
+            self.canvas.focus_set()
+        except Exception:
+            pass
 
     def _on_button_press(self, event):
         self.start_x = event.x
@@ -143,20 +181,25 @@ class ScreenSnipper:
 
                 if img_to_ocr is None:
                     # Donanımsal GDI yakalama fallback
-                    img_to_ocr = capture_screen_rect_gdi(x1, y1, x2 - x1, y2 - y1)
+                    vx, vy = getattr(self, "_virtual_origin", (0, 0))
+                    img_to_ocr = capture_screen_rect_gdi(x1 + vx, y1 + vy, x2 - x1, y2 - y1)
                     if img_to_ocr is None:
-                        img_to_ocr = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
+                        img_to_ocr = ImageGrab.grab(bbox=(x1 + vx, y1 + vy, x2 + vx, y2 + vy), all_screens=True)
 
                 recognized = self.ocr_engine.recognize_from_image(img_to_ocr)
                 if recognized and recognized.strip():
-                    self.root.after(0, lambda: self.on_text_extracted(recognized.strip()))
+                    text = recognized.strip()
+                    self._dispatch_to_ui(lambda: self.on_text_extracted(text))
                 else:
-                    self.root.after(0, self._notify_no_text)
+                    self._dispatch_to_ui(self._notify_no_text)
             except Exception as e:
                 print(f"Ekran OCR işleme hatası: {e}")
-                self.root.after(0, self._notify_no_text)
+                self._dispatch_to_ui(self._notify_no_text)
 
-        threading.Thread(target=_worker, daemon=True).start()
+        if getattr(self, "worker_pool", None):
+            self.worker_pool.submit(_worker)
+        else:
+            threading.Thread(target=_worker, daemon=True).start()
 
     def _notify_no_text(self):
         """Kullanıcıya seçim bölgesinde metin okunamadığını bildiren geçici toast."""

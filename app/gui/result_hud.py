@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 from typing import Dict, Any, Optional, Callable
+from app.gui.hover_tooltip import get_monitor_work_area
 
 
 class ResultHUD:
@@ -480,13 +481,15 @@ class ResultHUD:
         screen_h = self.window.winfo_screenheight()
 
         if saved_x is not None and saved_y is not None:
-            # Ekran sınırları içinde mi kontrol et
-            x = max(10, min(int(saved_x), screen_w - w - 10))
-            y = max(10, min(int(saved_y), screen_h - h - 10))
+            # Kullanıcının kaydettiği konumun ait olduğu monitörün çalışma alanını al
+            m_left, m_top, m_right, m_bottom = get_monitor_work_area(saved_x, saved_y)
+            x = max(m_left + 10, min(int(saved_x), m_right - w - 10))
+            y = max(m_top + 10, min(int(saved_y), m_bottom - h - 10))
         else:
             # Varsayılan: Ekranın sağ üst köşesi (videoyu engellemeyecek nokta)
-            x = screen_w - w - 24
-            y = 50
+            m_left, m_top, m_right, m_bottom = get_monitor_work_area(screen_w // 2, screen_h // 2)
+            x = m_right - w - 24
+            y = m_top + 50
 
         self.window.geometry(f"{w}x{h}+{x}+{y}")
 

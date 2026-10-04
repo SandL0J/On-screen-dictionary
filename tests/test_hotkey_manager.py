@@ -449,6 +449,16 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             self.temp_dir.cleanup()
         except Exception:
             pass
+        if getattr(self, "tk_available", False) and self.root:
+            for child in list(self.root.winfo_children()):
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+            try:
+                self.root.update()
+            except Exception:
+                pass
 
     @patch("app.hotkey_manager.HotkeyManager.start")
     def test_main_overlay_initializes_hotkeys_and_snip_label(self, mock_start):
@@ -460,6 +470,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             "hotkey_ocr": "tab+space",
             "hotkey_overlay": "alt+h",
             "hotkey_clipboard": "alt+c",
+            "first_run_completed": True,
         }
         overlay = MainOverlay(
             root=self.root,
@@ -494,7 +505,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             ocr_engine=OCREngine(),
             db=self.db,
             clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
-            config={"hotkey_ocr": "tab+space"}
+            config={"hotkey_ocr": "tab+space", "first_run_completed": True}
         )
         try:
             # Önce çubuğu gizle
@@ -523,7 +534,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             ocr_engine=OCREngine(),
             db=self.db,
             clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
-            config={"hotkey_clipboard": "alt+c"}
+            config={"hotkey_clipboard": "alt+c", "first_run_completed": True}
         )
         try:
             with patch("app.gui.main_overlay.copy_selected_text_windows", return_value="Entscheidung"):
@@ -531,6 +542,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
                     t = overlay._lookup_from_clipboard()
                     if t:
                         t.join(timeout=1.0)
+                    overlay._poll_ui_queue()
                     self.root.update()
                     mock_lookup.assert_called_with("Entscheidung")
         finally:
@@ -548,7 +560,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             ocr_engine=OCREngine(),
             db=self.db,
             clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
-            config={"hotkey_clipboard": "alt+c"}
+            config={"hotkey_clipboard": "alt+c", "first_run_completed": True}
         )
         try:
             with patch("app.gui.main_overlay.copy_selected_text_windows", return_value=None):
@@ -557,6 +569,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
                         t = overlay._lookup_from_clipboard()
                         if t:
                             t.join(timeout=1.0)
+                        overlay._poll_ui_queue()
                         self.root.update()
                         mock_lookup.assert_called_with("Apfel")
         finally:
@@ -574,7 +587,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
             ocr_engine=OCREngine(),
             db=self.db,
             clipboard_watcher=ClipboardWatcher(on_text_detected=lambda t: None),
-            config={"hotkey_clipboard": "alt+c"}
+            config={"hotkey_clipboard": "alt+c", "first_run_completed": True}
         )
         try:
             with patch("app.gui.main_overlay.copy_selected_text_windows", return_value=None):
@@ -583,6 +596,7 @@ class TestMainOverlayHotkeyIntegration(unittest.TestCase):
                         t = overlay._lookup_from_clipboard()
                         if t:
                             t.join(timeout=1.0)
+                        overlay._poll_ui_queue()
                         self.root.update()
                         mock_show.assert_called_once()
                         arg = mock_show.call_args[0][0]

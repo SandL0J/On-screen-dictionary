@@ -10,6 +10,7 @@ Sıfır bir kullanıcının uygulamayı ilk açtığında:
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import queue
 from typing import Callable, Optional, Dict, Any
 from app.config import save_config
 from app.hotkey_manager import format_hotkey
@@ -34,6 +35,10 @@ class OnboardingWizard:
 
         self.current_step = 0
         self.total_steps = 4
+        self._is_closed = False
+        self._ui_queue = queue.Queue()
+        self._ui_poll_id = None
+        self._poll_interval_ms = 15
 
         self.window = tk.Toplevel(parent)
         self.window.title("Ekran Sözlüğü • Hoş Geldiniz")
@@ -45,9 +50,62 @@ class OnboardingWizard:
         # Pencereyi ekranın ortasında konumlandır
         self._center_window()
 
+        self._schedule_poll()
         self._init_ui()
         self.window.protocol("WM_DELETE_WINDOW", self._finish_wizard)
+        self.window.bind("<Destroy>", self._on_destroy)
         self._show_step(0)
+
+    def _schedule_poll(self):
+        if self._is_closed:
+            return
+        try:
+            if self.window.winfo_exists():
+                self._ui_poll_id = self.window.after(self._poll_interval_ms, self._poll_queue)
+        except Exception:
+            pass
+
+    def _poll_queue(self):
+        self._ui_poll_id = None
+        if self._is_closed:
+            return
+        while not self._ui_queue.empty():
+            if self._is_closed:
+                break
+            try:
+                fn = self._ui_queue.get_nowait()
+                if not self._is_closed and self.window.winfo_exists():
+                    fn()
+            except queue.Empty:
+                break
+            except Exception as e:
+                print(f"[Onboarding UI Hatası]: {e}")
+        if not self._is_closed:
+            self._schedule_poll()
+
+    def post_to_ui(self, fn: Callable):
+        """Worker iş parçacıklarından gelen UI görevlerini thread-safe kuyruğa ekler."""
+        if not self._is_closed:
+            self._ui_queue.put(fn)
+
+    def _on_destroy(self, event):
+        """Pencere yok edildiğinde bekleyen zamanlayıcıları ve kuyruğu temizler."""
+        if getattr(event, "widget", None) == self.window:
+            self._cleanup_queue()
+
+    def _cleanup_queue(self):
+        self._is_closed = True
+        if self._ui_poll_id is not None:
+            try:
+                self.window.after_cancel(self._ui_poll_id)
+            except Exception:
+                pass
+            self._ui_poll_id = None
+        while not self._ui_queue.empty():
+            try:
+                self._ui_queue.get_nowait()
+            except Exception:
+                break
 
     def _center_window(self):
         self.window.update_idletasks()
@@ -199,12 +257,12 @@ class OnboardingWizard:
 
         # Öne çıkan özellikler listesi
         features = [
-            ("📋 Otomatik Pano Çevirisi (Ctrl+C)", "Metin seçip Ctrl+C yaptığınız anda arka plan dinleyicisi algılar ve anında çevirir."),
+            ("📋 Pano Çevirisi (İsteğe Bağlı / Ctrl+C)", "Metin kopyaladığınızda otomatik arama yapmak için Ayarlar'dan açabilirsiniz (gizlilik için varsayılan olarak kapalıdır). Manuel Alt+C her zaman çalışır."),
             ("🖱️ Fare Yan Tuşu ile Canlı Okuma", "Farenizi altyazıdaki kelimenin üzerine götürüp yan tuşa (Mouse 4/5) tıklayın, mini balon açılsın."),
-            ("✂️ Donuk Kare Ekran Kırpma (Tab+Space)", "Hızlı geçen altyazıları o karede dondurup kutu içine alarak kusursuz OCR ile çevirin."),
+            ("✂️ Donuk Kare Ekran Kırpma (Tab+Space)", "Hızlı geçen altyazıları o karede dondurup kutu içine alarak OCR ile çevirin."),
             ("🎨 Renkli Artikel ve Çoğul Desteği", "der (Mavi), die (Kırmızı), das (Yeşil) ile artikel hafızanızı güçlendirin."),
             ("📚 Kişisel Kelime Defteri & Flashcards", "Beğendiğiniz kelimeleri ⭐ ile deftere ekleyin, SM-2 aralıklı tekrar kartlarıyla çalışın."),
-            ("📴 %100 Çevrimdışı Çalışabilme", "İnternet veya harici API olmasa bile dahili sözlük ve dilbilgisi kuralları hazırdır.")
+            ("📴 Yerleşik Çevrimdışı Sözlük", "75 temel kelime ve 60 çoğul kuralı yerleşik olarak çevrimdışı sunulur; daha önce aranan tüm kelimeler de önbellekte saklanır.")
         ]
 
         for icon_title, text_detail in features:
@@ -359,18 +417,14 @@ class OnboardingWizard:
 
             def _update():
                 try:
-                    if self.window.winfo_exists():
+                    if not self._is_closed and self.window.winfo_exists():
                         self.btn_run_test.configure(state="normal")
                         color = "#10b981" if success else "#ef4444"
                         self.lbl_test_result.configure(text=msg, fg=color)
                 except Exception:
                     pass
 
-            try:
-                if self.window.winfo_exists():
-                    self.window.after(0, _update)
-            except Exception:
-                pass
+            self.post_to_ui(_update)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -387,10 +441,10 @@ class OnboardingWizard:
         ).pack(anchor="w", pady=(0, 6))
 
         info = (
-            "Ekran Sözlüğü, Google Gemini AI (Flash) entegrasyonu ile derin dilbilgisi "
+            "Ekran Sözlüğü, Google Gemini AI (varsayılan: gemini-3.5-flash-lite) entegrasyonu ile derin dilbilgisi "
             "açıklamaları ve pratik artikel ipuçları sunabilir. "
             "Bu özellik TAMAMEN OPSİYONELDİR. Anahtarınız olmasa bile uygulama yerel çevrimdışı "
-            "veritabanı ve hızlı web çevirisiyle eksiksiz çalışır.\n"
+            "veritabanı ve temel çeviriyle çalışır.\n"
         )
         tk.Label(
             self.content_frame,
@@ -444,7 +498,7 @@ class OnboardingWizard:
 
         self.lbl_key_status = tk.Label(
             box_ai,
-            text="💡 Ücretsiz API anahtarınızı aistudio.google.com adresinden alabilirsiniz. Boş bırakırsanız temel sözlük kullanılır.",
+            text="💡 Ücretsiz API anahtarınızı aistudio.google.com adresinden alabilirsiniz. Güncel model ve kota belgeleri için ai.google.dev adresini ziyaret edebilirsiniz.",
             font=("Segoe UI", 8, "italic"),
             fg="#9ca3af",
             bg="#18181b",
@@ -459,7 +513,7 @@ class OnboardingWizard:
 
         tk.Label(
             f_offline_badge,
-            text="📴 %100 Çevrimdışı Mod Hazır!",
+            text="📴 Çevrimdışı Mod Hazır!",
             font=("Segoe UI", 9, "bold"),
             fg="#10b981",
             bg="#27272a"
@@ -467,7 +521,7 @@ class OnboardingWizard:
 
         tk.Label(
             f_offline_badge,
-            text="Hiçbir ayar yapmadan devam edebilirsiniz. Temel sözlük, artikel renklendirmesi ve kelime defteri hemen kullanılabilir.",
+            text="Hiçbir ayar yapmadan devam edebilirsiniz. 75 temel kelime ve 60 çoğul kuralı, artikel renklendirmesi ve kelime defteri hemen kullanılabilir.",
             font=("Segoe UI", 8),
             fg="#d4d4d8",
             bg="#27272a",
@@ -494,7 +548,7 @@ class OnboardingWizard:
 
             def _update():
                 try:
-                    if self.window.winfo_exists():
+                    if not self._is_closed and self.window.winfo_exists():
                         self.btn_validate_key.configure(state="normal")
                         color = "#10b981" if ok else "#ef4444"
                         self.lbl_key_status.configure(text=msg, fg=color)
@@ -504,11 +558,7 @@ class OnboardingWizard:
                 except Exception:
                     pass
 
-            try:
-                if self.window.winfo_exists():
-                    self.window.after(0, _update)
-            except Exception:
-                pass
+            self.post_to_ui(_update)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -544,7 +594,8 @@ class OnboardingWizard:
             except Exception as e:
                 print(f"Başlangıç kelimeleri yükleme uyarısı: {e}")
 
-        # 4. Pencereyi kapat
+        # 4. Kuyruğu ve zamanlayıcıları temizle, pencereyi kapat
+        self._cleanup_queue()
         try:
             self.window.destroy()
         except Exception:

@@ -13,6 +13,7 @@ Bu test paketi, önceki sürümde tespit edilen kritik mantık hataları ve uç 
 10. Boş metin durumunda IndexError çökmesinin engellenmesi
 """
 import unittest
+from unittest.mock import patch
 import tempfile
 import gc
 from pathlib import Path
@@ -133,13 +134,25 @@ class TestBugFixesAndNewFeatures(unittest.TestCase):
         notes_m = analyze_sentence_grammar("Ihr müsst diese Aufgabe machen.")
         self.assertTrue(any("müssen" in n["title"] for n in notes_m))
 
-    def test_compound_noun_article_inheritance(self):
+    @patch.object(TranslationEngine, "_translate_via_gt")
+    @patch.object(TranslationEngine, "_fetch_wiktionary_info")
+    def test_compound_noun_article_inheritance(self, mock_wiki, mock_gt):
+        mock_gt.return_value = {
+            "translated_text": "hastane",
+            "detected_lang": "de",
+            "dict_entries": [{"pos": "isim", "meanings": ["hastane"]}]
+        }
+        mock_wiki.return_value = {
+            "article": "das",
+            "plural": "die Krankenhäuser",
+            "pos": "İsim (Nomen)"
+        }
         # 1. Genel arama das dönmeli
         res = self.translator.translate_and_analyze("Krankenhaus")
         self.assertEqual(res["article"], "das")
 
         # 2. Wiktionary'de olmayan veya çevrimdışı durumda bileşik isim son kelime kuralı devreye girmeli
-        self.translator._fetch_wiktionary_info = lambda w: {'article': '', 'plural': '', 'pos': ''}
+        mock_wiki.return_value = {'article': '', 'plural': '', 'pos': ''}
         res_fallback = self.translator._lookup_word("Krankenhaus")
         self.assertEqual(res_fallback["article"], "das")
         self.assertIn("Bileşik isim kuralı", res_fallback.get("rule_note", ""))

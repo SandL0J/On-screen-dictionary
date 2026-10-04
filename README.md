@@ -55,20 +55,24 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 
 ### 4. 🤖 Google Gemini AI Entegrasyonu (Düşük Tüketimli Flash Modelleri)
 - Ayarlar menüsünden Google Gemini API anahtarınızı bağlayabilirsiniz.
-- **Hafif ve Ekonomik:** Google AI Studio'nun yüksek performanslı ve düşük token tüketen Flash modelleriyle (`gemini-1.5-flash`, `gemini-2.0-flash` vb.) tüm metinleri ve cümleleri derin dilbilgisi analizleriyle Türkçeye çevirir.
+- **Hafif ve Ekonomik:** Google AI Studio'nun yüksek performanslı ve düşük token tüketen güncel modelleriyle (varsayılan: `gemini-3.5-flash-lite`, kalite odaklı: `gemini-3.8-flash`) tüm metinleri ve cümleleri derin dilbilgisi analizleriyle Türkçeye çevirir.
+- Güncel modeller için [Google AI Studio Modelleri](https://ai.google.dev/gemini-api/docs/models) ve kota limitleri için [Gemini Hız Limitleri](https://ai.google.dev/gemini-api/docs/rate-limits) resmi belgelerini inceleyebilirsiniz.
 - **Canlı Test Butonu:** API anahtarınızın çalışıp çalışmadığını ayarlar menüsündeki `🔍 Test Et` butonuyla anında doğrulayabilirsiniz.
 
-### 5. 📋 Otomatik Pano Takibi (`Ctrl + C`)
-- İnternette veya PDF okurken herhangi bir Almanca metni seçip `Ctrl+C` yaptığınız an, arka plan dinleyicisi metni yakalar ve ekranınızda çevirisini gösterir.
+### 5. 📋 Pano Takibi (İsteğe Bağlı & Gizlilik Odaklı)
+- Gizliliğinizi korumak amacıyla otomatik pano okuma varsayılan olarak **kapalıdır**. Dilediğiniz zaman Ayarlar menüsünden etkinleştirebilirsiniz.
+- Etkinleştirildiğinde, internette veya PDF okurken herhangi bir Almanca metni seçip `Ctrl+C` yaptığınız an, arka plan dinleyicisi metni yakalar ve ekranınızda çevirisini gösterir.
+- Otomatik pano dinleme kapalı olsa dahi, klavyeden **`Alt + C`** kısayolu ile istediğiniz zaman seçili metni manuel olarak çevirebilirsiniz.
 
 ### 6. 📚 Kişisel Kelime Defteri ve Flashcards
 - Beğendiğiniz veya öğrenmek istediğiniz kelimeleri tek tıkla (**⭐**) defterinize ekleyin.
 - Dahili Flashcard arayüzü ile kelimeleri pratik yapın.
 - Kelimelerinizi **Anki** uyumlu CSV formatında dışa aktarın.
 
-### 7. ⚡ Çevrimdışı SQLite Önbellek (Offline Cache)
-- Daha önce bakılan veya sık kullanılan 1.000+ temel Almanca kelime çevrimdışı yerel veritabanında saklanır.
-- İnternet bağlantınız olmasa dahi anında yanıt verir ve gereksiz kota tüketmez.
+### 7. ⚡ Çevrimdışı Sözlük ve SQLite Önbellek
+- **75 temel Almanca kelime** ve **60 çoğul kuralı eşlemesi** yerleşik olarak çevrimdışı sunulur.
+- Daha önce aranan tüm kelimeler ve çeviriler yerel SQLite önbelleğinde saklanır.
+- İnternet bağlantınız olmasa dahi önbellekteki kelimelere anında yanıt verir ve gereksiz kota tüketmez.
 
 ---
 
@@ -78,7 +82,7 @@ Uygulama arka plandayken veya tam ekran bir video/oyun açıkken dahi kısayolla
 
 | Kısayol | Fonksiyon | Açıklama |
 | :--- | :--- | :--- |
-| **`Ctrl + C`** | **Otomatik Pano Çevirisi** | Herhangi bir uygulamada metin seçip kopyaladığınız anda çeviri kartı otomatik açılır. |
+| **`Ctrl + C`** | **Pano Çevirisi (İsteğe Bağlı)** | Ayarlar'dan otomatik pano takibi açıldığında kopyalanan metin için çeviri kartı otomatik açılır. |
 | **`Fare Yan Tuşları`** | **Nokta Atışı Hover OCR** | Farenin altındaki kelimeyi okur ve üzerinde mini çeviri balonu açar (Mouse 4/5). |
 | **`Tab + Space`** | **Ekran Kırp / OCR** | Ekranı o karede dondurur ve altyazıyı çerçeve içine alıp çevirmenizi sağlar. |
 | **`Alt + V`** | **Hover Modu Aç/Kapa** | Canlı fare okuma özelliğini klavyeden anında açıp kapatır. |
@@ -92,9 +96,17 @@ Uygulama arka plandayken veya tam ekran bir video/oyun açıkken dahi kısayolla
 ## 🚀 Kurulum ve Çalıştırma
 
 ### Gereksinimler
-- **İşletim Sistemi:** Windows 10 veya Windows 11 (64-bit)
-- **Python:** Python 3.10 veya üzeri
+- **İşletim Sistemi:** Windows 11 (64-bit) birincil hedeftir. Windows 10 (Sürüm 1809+) en iyi çaba (best-effort) esasıyla desteklenmektedir (Microsoft resmi Windows 10 Home/Pro desteği 14 Ekim 2025 itibarıyla sona ermiştir).
+- **Python (Kaynak Koddan Çalıştırma):** Python 3.10 veya üzeri
 - Windows yerel OCR desteği (Windows Türkçe veya Almanca OCR dil paketleri yüklü olmalıdır)
+
+### Kurulum Seçenekleri
+
+#### Seçenek A: Windows Tek Tık Kurulum Paketi (Installer .exe - Önerilen)
+Python veya komut satırı kurmadan doğrudan kullanmak için [GitHub Releases](https://github.com/SandL0J/On-screen-dictionary/releases) sayfasından en güncel `EkranSozlugu-Setup-vX.Y.Z.exe` yükleyicisini indirip kurabilirsiniz.
+> 🛡️ **SmartScreen Notu:** Açık kaynaklı ve henüz EV sertifikası ile imzalanmamış paketlerde Windows Defender SmartScreen "Bilinmeyen Yayımcı" uyarısı verebilir. Kuruluma devam etmek için **"Ek Bilgi"** -> **"Yine de Çalıştır"** adımlarını izleyebilirsiniz.
+
+#### Seçenek B: Kaynak Koddan Çalıştırma (Geliştirici)
 
 ### 1. Repoyu Klonlayın
 ```bash
@@ -147,9 +159,11 @@ On-screen-dictionary/
 │   ├── hover_tracker.py       # Fare yan tuşları (Mouse 4/5) ve imleç takip motoru
 │   ├── ocr_engine.py          # Windows Media OCR & kelime koordinat eşleştiricisi
 │   ├── paths.py               # Kullanıcı veri yolları (%APPDATA%) ve otomatik veri göçü
+│   ├── security.py            # Windows DPAPI şifreleme ve hassas veri/pano filtresi
 │   ├── startup_manager.py     # Windows başlangıç kayıt defteri yönetimi
 │   ├── translator.py          # Türkçe hedef dilli ana çeviri motoru
 │   ├── tray_manager.py        # Windows sistem tepsisi (System Tray) entegrasyonu
+│   ├── worker_pool.py         # Sınırlı iş parçacığı havuzu (DaemonThreadPoolExecutor)
 │   └── gui/
 │       ├── hover_tooltip.py   # Fare üstü yarı saydam mini çeviri balonu
 │       ├── main_overlay.py    # Yüzen modern kontrol çubuğu
@@ -157,7 +171,9 @@ On-screen-dictionary/
 │       ├── settings_window.py # Ayarlar ve Gemini API yönetim penceresi
 │       ├── snipper.py         # Ekran dondurmalı bölge kırpıcı
 │       └── wordbook_window.py # Kelime defteri ve flashcard arayüzü
-├── tests/                     # 155 birim ve regresyon testinden oluşan test paketi
+├── tests/                     # 238 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
+├── packaging/                 # Windows Installer, PyInstaller spec ve ikon varlıkları
+├── .github/workflows/         # GitHub Actions CI/CD test matrisi ve release iş akışları
 ├── main.py                    # Uygulama ana giriş noktası
 ├── run_app.bat                # Hızlı Windows başlatıcı
 ├── test_mouse_trigger.py      # Fare tuşu ve OCR teşhis aracı
@@ -175,6 +191,11 @@ On-screen-dictionary/
 Tüm test paketini çalıştırmak için:
 ```bash
 python -m unittest discover -s tests -v
+```
+
+Ağ bağlantısından tamamen yalıtılmış (offline deterministik) test çalıştırmak için:
+```powershell
+$env:EKRAN_SOZLUGU_OFFLINE_TEST="1"; python -m unittest discover -s tests -v
 ```
 
 ---

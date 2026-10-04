@@ -22,17 +22,42 @@ ARTICLE_TURKISH = {
 # Almanca Kural Tabanlı Son Ek (Suffix) Tablosu
 SUFFIX_RULES = [
     # Neutrum (das) kuralları (-ment önce kontrol edilir)
-    (r"(chen|lein|ment|um|tum|ma)$", "das", "Son ek kuralı: -{suffix} biten kelimeler daima nötrdür (das)."),
+    (r"(chen|lein|ment|um|tum|ma)$", "das", "Son ek kuralı: -{suffix} biten kelimeler genellikle nötrdür (das) [istisnalar hariç]."),
     # Femininum (die) kuralları
-    (r"(ung|heit|keit|schaft|tät|ik|ur|ion|ei|ie|anz|enz)$", "die", "Son ek kuralı: -{suffix} biten kelimeler daima dişildir (die)."),
+    (r"(ung|heit|keit|schaft|tät|ik|ur|ion|ei|ie|anz|enz)$", "die", "Son ek kuralı: -{suffix} biten kelimeler genellikle dişildir (die) [istisnalar hariç]."),
     (r"in$", "die", "Dişil kişi/meslek eki: -in ile biten meslek ve şahıs isimleri dişildir (die)."),
     # Maskulinum (der) kuralları (-ment olmayan -ent)
-    (r"(ling|ismus|ist|or|ant|eur|loge|(?<!m)ent)$", "der", "Son ek kuralı: -{suffix} biten kelimeler erildir (der)."),
+    (r"(ling|ismus|ist|or|ant|eur|loge|(?<!m)ent)$", "der", "Son ek kuralı: -{suffix} biten kelimeler genellikle erildir (der) [istisnalar hariç]."),
     # Nötr isim ekleri
     (r"nis$", "das", "Son ek kuralı: -nis ile biten isimlerin çoğu nötrdür (das)."),
     # -e ile biten isimler (%90 die)
     (r"[a-zäöü]e$", "die", "Genel kural: -e ile biten iki heceli Almanca isimlerin %90'ı dişildir (die)."),
 ]
+
+# Sık Kullanılan Belirgin Artikel İstisnaları (Kural yanılgılarını önlemek için)
+GENDER_EXCEPTIONS: Dict[str, Tuple[str, str]] = {
+    # -ma istisnaları (İtalyanca/Latince kökenli)
+    "firma": ("die", "İstisna: 'Firma' İtalyanca kökenli olup dişildir (die Firma)."),
+    "oma": ("die", "İstisna: 'Oma' şahıs ismi olup dişildir (die Oma)."),
+    # -ment istisnaları
+    "moment": ("der", "İstisna: 'Moment' (an, süre) erildir (der Moment)."),
+    "konsument": ("der", "İstisna: 'Konsument' (tüketici) şahıs ismi olup erildir (der Konsument)."),
+    # -tum istisnaları
+    "irrtum": ("der", "İstisna: 'Irrtum' (yanılgı) erildir (der Irrtum)."),
+    "reichtum": ("der", "İstisna: 'Reichtum' (zenginlik) erildir (der Reichtum)."),
+    # -or istisnaları
+    "labor": ("das", "İstisna: 'Labor' (laboratuvar) nötrdür (das Labor)."),
+    # -e istisnaları (Maskulinum veya Neutrum olanlar)
+    "name": ("der", "İstisna: 'Name' (isim) eril bir isimdir (der Name)."),
+    "käse": ("der", "İstisna: 'Käse' (peynir) eril bir isimdir (der Käse)."),
+    "kaese": ("der", "İstisna: 'Käse' (peynir) eril bir isimdir (der Käse)."),
+    "gedanke": ("der", "İstisna: 'Gedanke' (düşünce) eril bir isimdir (der Gedanke)."),
+    "glaube": ("der", "İstisna: 'Glaube' (inanç) eril bir isimdir (der Glaube)."),
+    "wille": ("der", "İstisna: 'Wille' (irade) eril bir isimdir (der Wille)."),
+    "friede": ("der", "İstisna: 'Friede' (barış) eril bir isimdir (der Friede)."),
+    "ende": ("das", "İstisna: 'Ende' (son) nötr bir isimdir (das Ende)."),
+    "auge": ("das", "İstisna: 'Auge' (göz) nötr bir isimdir (das Auge)."),
+}
 
 # Ayrılabilir Fiil Önekleri (Trennbare Verben)
 SEPARABLE_PREFIXES = [
@@ -106,6 +131,21 @@ MODAL_VERBS = {
     "möchtest": "möchten (istemek)",
     "möchtet": "möchten (istemek)",
     "möchten": "möchten (istemek)",
+    # können (Konjunktiv II - Kibar İstek / İhtimal)
+    "könnte": "können [Konjunktiv II] (yapabilirdi / -ebilirdi)",
+    "könntest": "können [Konjunktiv II] (yapabilirdin)",
+    "könnten": "können [Konjunktiv II] (yapabilirdiniz / -ebilirdiler)",
+    "könntet": "können [Konjunktiv II] (yapabilirdiniz)",
+    # dürfen (Konjunktiv II - İzin / Olasılık)
+    "dürfte": "dürfen [Konjunktiv II] (izinli olsaydı / muhtemelen)",
+    "dürftest": "dürfen [Konjunktiv II] (izinli olsaydın)",
+    "dürften": "dürfen [Konjunktiv II] (izinli olsalardı / muhtemelen)",
+    "dürftet": "dürfen [Konjunktiv II] (izinli olsaydınız)",
+    # müssen (Konjunktiv II - Gereklilik)
+    "müsste": "müssen [Konjunktiv II] (zorunda olurdu / -meliydi)",
+    "müsstest": "müssen [Konjunktiv II] (zorunda olurdun)",
+    "müssten": "müssen [Konjunktiv II] (zorunda olurlardı)",
+    "müsstet": "müssen [Konjunktiv II] (zorunda olurdunuz)",
 }
 
 # Yan Cümle Bağlaçları (Fiili sona atan bağlaçlar)
@@ -294,6 +334,11 @@ def predict_gender_by_rules(word: str) -> Tuple[str, str]:
         return "", ""
     w_clean = word.strip(".,!?:;\"'()[]{}„“»«-_~")
     w_lower = w_clean.lower()
+
+    # 1. Bilinen belirgin istisnalar (Firma, Moment, Labor, Irrtum vb.)
+    if w_lower in GENDER_EXCEPTIONS:
+        return GENDER_EXCEPTIONS[w_lower]
+
     for pattern, article, explanation in SUFFIX_RULES:
         m = re.search(pattern, w_lower)
         if m:
@@ -370,10 +415,24 @@ def analyze_sentence_grammar(sentence: str) -> List[Dict[str, str]]:
 
         # Durum A: Cümlenin sonunda tek başına ayrılabilir önek kalmış (örn: "Er steht früh auf.")
         if last_lower in SEPARABLE_PREFIXES:
-            # Cümledeki çekimli fiili bulmaya çalış
+            # Cümledeki çekimli fiili bulmaya çalış (sayılar, edatlar, zamirler ve isimler elenir)
+            non_verbs = {
+                "um", "am", "im", "in", "an", "auf", "aus", "bei", "mit", "nach", "von",
+                "zu", "vor", "über", "unter", "durch", "für", "gegen", "ohne", "bis",
+                "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf",
+                "ich", "du", "er", "sie", "es", "wir", "ihr", "mich", "dich", "ihn", "uns", "euch", "ihnen",
+                "der", "die", "das", "den", "dem", "des", "ein", "eine", "einen", "einem", "einer", "eines",
+                "nicht", "nie", "oft", "immer", "heute", "morgen", "gestern", "jetzt", "hier", "dort", "sehr"
+            }
             finite_verb = ""
-            for tok in tokens_lower[1:]:
-                if tok != last_lower and len(tok) >= 3:
+            for raw_tok, tok in zip(raw_tokens[:-1], tokens_lower[:-1]):
+                # Büyük harfle başlayan isimleri ve bilinen edat/sayıları atla
+                if raw_tok and raw_tok[0].isupper():
+                    continue
+                if tok in non_verbs or len(tok) < 3 or tok == last_lower:
+                    continue
+                # Tipik Almanca çekim ekleri (Präsens / Präteritum)
+                if any(tok.endswith(end) for end in ("e", "st", "t", "en", "te", "test", "ten")):
                     finite_verb = tok
                     break
             verb_hint = f" ({last_lower} + {finite_verb})" if finite_verb else ""
@@ -384,18 +443,25 @@ def analyze_sentence_grammar(sentence: str) -> List[Dict[str, str]]:
                 "text": f"Cümlenin sonunda '{last_lower}' öneki bulunuyor. Bu cümlenin fiili ayrılabilen bir fiildir{verb_hint}."
             })
         # Durum B: Cümlenin sonunda veya mastar olarak birleşik ayrılabilir fiil var (örn: aufstehen, mitkommen)
-        # ÖNEMLİ: Almanca isimler (Abend, Vorname, Aufgabe, Einkauf) ve sıfatlar elenmelidir!
+        # ÖNEMLİ: Almanca isimler (Abend, Vorname, Aufgabe, Einkauf) ve ayrılmayan fiiller elenmelidir!
         elif not last_token[0].isupper() and (last_lower.endswith("en") or last_lower.endswith("eln") or last_lower.endswith("ern")):
-            for pfx in SEPARABLE_PREFIXES:
-                if last_lower.startswith(pfx) and len(last_lower) >= len(pfx) + 3:
-                    base_stem = last_lower[len(pfx):]
-                    notes.append({
-                        "type": "trennbare",
-                        "badge": "Ayrılabilir Fiil",
-                        "title": f"Ayrılabilir Fiil: '{last_lower}'",
-                        "text": f"'{last_lower}' fiili '{pfx}-' ayrılabilir öneki içerir (Kök: {base_stem}, Präsens çekiminde '{pfx}' sona gider)."
-                    })
-                    break
+            non_separable = {
+                "antworten", "beantworten", "abonnieren", "einigen", "arbeiten", "atmen",
+                "angeln", "ebnen", "urteilen", "beurteilen", "begegnen"
+            }
+            if last_lower not in non_separable:
+                for pfx in SEPARABLE_PREFIXES:
+                    if last_lower.startswith(pfx) and len(last_lower) >= len(pfx) + 4:
+                        base_stem = last_lower[len(pfx):]
+                        # Kökün mantıklı bir fiil mastarı olduğunu doğrula (en az 4 karakter ve fiil eki)
+                        if any(base_stem.endswith(end) for end in ("en", "eln", "ern")):
+                            notes.append({
+                                "type": "trennbare",
+                                "badge": "Ayrılabilir Fiil",
+                                "title": f"Ayrılabilir Fiil: '{last_lower}'",
+                                "text": f"'{last_lower}' fiili '{pfx}-' ayrılabilir öneki içerir (Kök: {base_stem}, Präsens çekiminde '{pfx}' sona gider)."
+                            })
+                            break
 
     return notes
 

@@ -2,7 +2,7 @@
 Gemini AI Entegrasyon ve Doğrulama Servisi
 Google Gemini REST API üzerinden:
 1. API anahtarı bağlantı doğrulaması
-2. Düşük maliyetli Flash modelleriyle (gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-flash-8b)
+2. Güncel Flash modelleriyle (gemini-3.5-flash-lite, gemini-3.8-flash, gemini-3.5-flash)
    doğrudan çift yönlü çeviri ve derin dilbilgisi analizi
 3. Hızlı açıklama ve artikel kuralı üretimi
 sağlar.
@@ -11,21 +11,27 @@ import urllib.request
 import urllib.error
 import urllib.parse
 import json
+import time
 from typing import Tuple, Optional, Dict, Any
+
+from app.security import is_sensitive_clipboard_text, is_dpapi_protected
 
 
 SUPPORTED_MODELS = [
-    ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite (Önerilen - Hızlı & Kararlı)"),
-    ("gemini-3.8-flash", "Gemini 3.8 Flash (Yeni Nesil Model)"),
-    ("gemini-flash-latest", "Gemini Flash Latest (En Güncel Flash)"),
-    ("gemini-1.5-flash", "Gemini 1.5 Flash (Eski Model)"),
+    ("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite (Önerilen - Hızlı & Düşük Maliyet)"),
+    ("gemini-3.8-flash", "Gemini 3.8 Flash (Kalite Odaklı & Akıllı)"),
+    ("gemini-3.5-flash", "Gemini 3.5 Flash (Dengeli Model)"),
+    ("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite (Hafif Model)"),
+    ("gemini-2.5-flash", "Gemini 2.5 Flash (Eski / Kısıtlı Model)"),
 ]
+
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 
 class GeminiService:
-    def __init__(self, api_key: str = "", model: str = "gemini-3.1-flash-lite"):
+    def __init__(self, api_key: str = "", model: str = DEFAULT_MODEL):
         self.api_key = api_key.strip() if api_key else ""
-        self.model = model.strip() if model else "gemini-3.1-flash-lite"
+        self.model = model.strip() if model else DEFAULT_MODEL
 
     def set_api_key(self, api_key: str):
         self.api_key = api_key.strip() if api_key else ""
@@ -35,19 +41,21 @@ class GeminiService:
             self.model = model.strip()
 
     def is_configured(self) -> bool:
-        return bool(self.api_key and len(self.api_key) > 10)
+        return bool(self.api_key and len(self.api_key) > 10 and not is_dpapi_protected(self.api_key) and not self.api_key.startswith("dpapi:"))
 
-    def _call_gemini_api(self, prompt: str, is_json: bool = False, max_tokens: int = 1000) -> Optional[str]:
+    def _call_gemini_api(self, prompt: str, is_json: bool = False, max_tokens: int = 1000, deadline: Optional[float] = None) -> Optional[str]:
         """
-        Gemini REST API'sine istek gönderir.
+        Gemini REST API'sine x-goog-api-key başlığı ile güvenli istek gönderir.
         Kullanıcının modeli (404 veya 503 gibi) hata verirse bilinen aktif Flash modellerine otomatik yedekleme yapar.
+        API anahtarı asla URL'de iletilmez veya loglara yazdırılmaz.
+        Uçtan uca zaman bütçesi (deadline) aşımını engeller.
         """
         if not self.is_configured():
             return None
 
-        preferred = self.model if self.model else "gemini-3.1-flash-lite"
+        preferred = self.model if self.model else DEFAULT_MODEL
         candidates = [preferred]
-        for m in ("gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-flash-latest"):
+        for m in ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite"):
             if m not in candidates:
                 candidates.append(m)
 
@@ -66,18 +74,28 @@ class GeminiService:
         payload = json.dumps(payload_dict).encode("utf-8")
 
         for model_name in candidates:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={self.api_key}"
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.2:
+                    break
+                per_call_timeout = max(0.2, min(remaining, 3.0))
+            else:
+                per_call_timeout = 8.0
+
+            # Güvenlik: API anahtarı URL'de taşınmaz, x-goog-api-key HTTP başlığında iletilir
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
             try:
                 req = urllib.request.Request(
                     url,
                     data=payload,
                     headers={
                         "Content-Type": "application/json",
-                        "User-Agent": "ScreenLingo-Assistant/1.0"
+                        "User-Agent": "ScreenLingo-Assistant/1.0",
+                        "x-goog-api-key": self.api_key
                     },
                     method="POST"
                 )
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with urllib.request.urlopen(req, timeout=per_call_timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     candidates_resp = data.get("candidates", [])
                     if candidates_resp:
@@ -85,7 +103,7 @@ class GeminiService:
                         if parts:
                             text_out = parts[0].get("text", "").strip()
                             if text_out:
-                                if self.model != model_name and model_name in ("gemini-3.1-flash-lite", "gemini-3.8-flash"):
+                                if self.model != model_name and model_name in ("gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash"):
                                     self.model = model_name
                                 return text_out
             except urllib.error.HTTPError as e:
@@ -93,7 +111,8 @@ class GeminiService:
                 if e.code in (404, 503, 500):
                     continue
                 else:
-                    print(f"Gemini API HTTP {e.code} hatası ({model_name}): {e}")
+                    # Loglarda veya konsolda API anahtarı ASLA yazdırılmamalıdır
+                    print(f"Gemini API HTTP {e.code} hatası ({model_name})")
                     break
             except Exception:
                 continue
@@ -102,20 +121,24 @@ class GeminiService:
 
     def test_connection(self, key_to_test: Optional[str] = None) -> Tuple[bool, str]:
         """
-        Gemini API anahtarının çalışıp çalışmadığını test eder.
+        Gemini API anahtarının çalışıp çalışmadığını x-goog-api-key başlığı ile test eder.
         Dönüş: (başarılı_mı: bool, durum_mesajı: str)
         """
         api_key = (key_to_test if key_to_test is not None else self.api_key).strip()
         if not api_key:
             return False, "⚠️ Lütfen önce bir Gemini API anahtarı girin."
+        if api_key.startswith("dpapi:") or is_dpapi_protected(api_key):
+            return False, "❌ Şifreli metin (DPAPI) doğrudan test edilemez."
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        # Güvenlik: API anahtarı URL sorgusunda iletilmez
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
         try:
             req = urllib.request.Request(
                 url,
                 headers={
                     "User-Agent": "ScreenLingo-Assistant/1.0",
-                    "Accept": "application/json"
+                    "Accept": "application/json",
+                    "x-goog-api-key": api_key
                 }
             )
             with urllib.request.urlopen(req, timeout=7) as resp:
@@ -134,6 +157,11 @@ class GeminiService:
             except Exception:
                 err_msg = ""
 
+            # Güvenlik: Hata mesajında anahtarın sızdırılmasını engelle
+            for k in (api_key, self.api_key):
+                if k and k in err_msg:
+                    err_msg = err_msg.replace(k, "[GİZLENDİ]")
+
             if e.code in (400, 401):
                 return False, "❌ API Anahtarı Geçersiz: Google anahtarı doğrulamadı."
             elif e.code == 403:
@@ -144,12 +172,16 @@ class GeminiService:
                 detail = f" ({err_msg})" if err_msg else ""
                 return False, f"❌ Google API Hatası (HTTP {e.code}){detail}"
 
-        except urllib.error.URLError as e:
-            return False, f"⚠️ Bağlantı Kurulamadı: İnternet bağlantınızı kontrol edin. ({e.reason})"
+        except urllib.error.URLError:
+            return False, "⚠️ Bağlantı Kurulamadı: İnternet bağlantınızı kontrol edin."
         except Exception as e:
-            return False, f"⚠️ Hata: {str(e)}"
+            msg = str(e)
+            for k in (api_key, self.api_key):
+                if k and k in msg:
+                    msg = msg.replace(k, "[GİZLENDİ]")
+            return False, f"⚠️ Hata: {msg}"
 
-    def translate_and_analyze(self, text: str) -> Optional[Dict[str, Any]]:
+    def translate_and_analyze(self, text: str, deadline: Optional[float] = None) -> Optional[Dict[str, Any]]:
         """
         Metni doğrudan Gemini API'ye sorarak çevirir ve dilbilgisi analizi yapar.
         Mümkün olan en az token tüketen Flash modeli kullanır.
@@ -158,7 +190,7 @@ class GeminiService:
             return None
 
         clean = text.strip()
-        if not clean:
+        if not clean or is_sensitive_clipboard_text(clean):
             return None
 
         prompt = (
@@ -179,7 +211,7 @@ class GeminiService:
             f'Almanca Metin: "{clean}"'
         )
 
-        raw_json = self._call_gemini_api(prompt, is_json=True, max_tokens=1000)
+        raw_json = self._call_gemini_api(prompt, is_json=True, max_tokens=1000, deadline=deadline)
         if not raw_json:
             return None
 
@@ -265,16 +297,20 @@ class GeminiService:
             "source": "gemini_ai"
         }
 
-    def generate_explanation(self, text: str, source_lang: str = "de", target_lang: str = "tr") -> Optional[str]:
+    def generate_explanation(self, text: str, source_lang: str = "de", target_lang: str = "tr", deadline: Optional[float] = None) -> Optional[str]:
         """İsteğe bağlı olarak Gemini'den kısa dilbilgisi veya kullanım notu alır."""
         if not self.is_configured():
+            return None
+
+        clean = text.strip() if text else ""
+        if not clean or is_sensitive_clipboard_text(clean):
             return None
 
         prompt = (
             f"Almanca ve Türkçe dil asistanısın. Aşağıdaki metni açıkla. "
             f"Kaynak dil: {source_lang}, Hedef dil: {target_lang}.\n"
-            f"Metin: '{text}'\n"
+            f"Metin: '{clean}'\n"
             f"Lütfen en fazla 2-3 cümleyle, varsa artikel kuralı, fiil çekimi veya günlük kullanım ipucu ver."
         )
 
-        return self._call_gemini_api(prompt, is_json=False, max_tokens=500)
+        return self._call_gemini_api(prompt, is_json=False, max_tokens=500, deadline=deadline)

@@ -37,6 +37,18 @@ class TestHoverFeature(unittest.TestCase):
         self.mock_db = MagicMock()
         self.mock_db.is_word_saved.return_value = False
 
+    def tearDown(self):
+        if getattr(self, "root", None):
+            for child in list(self.root.winfo_children()):
+                try:
+                    child.destroy()
+                except Exception:
+                    pass
+            try:
+                self.root.update()
+            except Exception:
+                pass
+
     def test_config_hover_defaults(self):
         """DEFAULT_CONFIG içinde ve load_config sonucunda hover ayarları bulunmalıdır."""
         self.assertIn("hover_enabled", DEFAULT_CONFIG)
@@ -314,7 +326,7 @@ class TestHoverFeature(unittest.TestCase):
             ocr_engine=self.ocr,
             db=self.mock_db,
             clipboard_watcher=mock_clip,
-            config={"hover_enabled": False, "hotkey_hover": "alt+v"}
+            config={"hover_enabled": False, "hotkey_hover": "alt+v", "first_run_completed": True}
         )
 
         self.assertTrue(hasattr(overlay, "hover_tracker"))

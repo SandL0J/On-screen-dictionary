@@ -2,6 +2,7 @@
 Uç Nokta (Edge Case) ve Dayanıklılık Testleri
 """
 import unittest
+from unittest.mock import patch
 import tempfile
 import gc
 from pathlib import Path
@@ -26,7 +27,15 @@ class TestEdgeCases(unittest.TestCase):
         except Exception:
             pass
 
-    def test_german_umlauts_and_sz(self):
+    @patch.object(TranslationEngine, "_translate_via_gt")
+    @patch.object(TranslationEngine, "_fetch_wiktionary_info")
+    def test_german_umlauts_and_sz(self, mock_wiki, mock_gt):
+        mock_gt.return_value = {
+            "translated_text": "anlam",
+            "detected_lang": "de",
+            "dict_entries": []
+        }
+        mock_wiki.return_value = {"article": "die", "plural": "", "pos": "İsim (Nomen)"}
         words = ["Überraschung", "Änderung", "Öl", "Straße", "größer"]
         for w in words:
             res = self.translator.translate_and_analyze(w)
@@ -69,7 +78,15 @@ class TestEdgeCases(unittest.TestCase):
         notes = analyze_sentence_grammar(complex_sentence)
         self.assertGreaterEqual(len(notes), 2)  # obwohl, müssen, aufstehen
 
-    def test_weird_punctuation(self):
+    @patch.object(TranslationEngine, "_translate_via_gt")
+    @patch.object(TranslationEngine, "_fetch_wiktionary_info")
+    def test_weird_punctuation(self, mock_wiki, mock_gt):
+        mock_gt.return_value = {
+            "translated_text": "merhaba",
+            "detected_lang": "de",
+            "dict_entries": []
+        }
+        mock_wiki.return_value = {"article": "", "plural": "", "pos": "Ünlem"}
         res = self.translator.translate_and_analyze("???!!!   --- Hallo??? ***")
         self.assertNotIn("error", res)
 
