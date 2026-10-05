@@ -25,7 +25,7 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 │                                           │ (Fare Yan Tuşu: Mouse 4/5)    │
 │                                                                           │
 │       ┌───────────────────────────────────────────────────────────┐       │
-│       │  🔴 DIE Entscheidung  (Pl: die Entscheidungen)         ⭐ │       │
+│       │  🔴 DIE Entscheidung  (Pl: die Entscheidungen)         ⭐│       │
 │       │  karar (seçim, hüküm)                                     │       │
 │       │  💡 İpucu: -ung eki alan isimler 'die' artikeli alır.     │       │
 │       └───────────────────────────────────────────────────────────┘       │
