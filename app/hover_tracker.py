@@ -619,8 +619,12 @@ class HoverTracker:
                     self._active_word_screen_rect = None
 
                 try:
+                    sentence = (target_box.get("sentence") or "").strip()
                     result_data = self.translator.translate_and_analyze(cleaned_word)
                     if result_data:
+                        result_data["context_sentence"] = sentence
+                        if sentence and not result_data.get("example_de"):
+                            result_data["example_de"] = sentence
                         self.on_word_hover(result_data, cursor_x, cursor_y)
                     else:
                         self._trigger_not_found_feedback(cursor_x, cursor_y)
@@ -634,3 +638,6 @@ class HoverTracker:
         except Exception as e:
             print(f"Hover inceleme genel hatası: {e}")
             self._trigger_not_found_feedback(cursor_x, cursor_y)
+
+    # Geriye dönük uyumluluk ve doğrudan çağrılar için alias
+    _process_hover_detection = _inspect_hover_area

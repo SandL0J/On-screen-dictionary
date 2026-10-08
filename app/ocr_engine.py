@@ -154,6 +154,7 @@ if ($result) {
                             y = [int][Math]::Round($rect.Y)
                             w = [int][Math]::Round($rect.Width)
                             h = [int][Math]::Round($rect.Height)
+                            line_text = $line.Text
                         }
                     }
                 }
@@ -410,7 +411,8 @@ if ($result) {
                     "x": int(rx),
                     "y": int(ry),
                     "w": int(rw),
-                    "h": int(rh)
+                    "h": int(rh),
+                    "sentence": self.clean_recognized_text(item.get("line_text", ""))
                 })
             return results
         except Exception as e:
@@ -473,8 +475,11 @@ if ($result) {
             width_idx = header.index("width") if "width" in header else 8
             height_idx = header.index("height") if "height" in header else 9
             text_idx = header.index("text") if "text" in header else 11
+            line_idx = header.index("line_num") if "line_num" in header else 4
 
-            results = []
+            raw_entries = []
+            line_words = {}
+
             for row_str in lines[1:]:
                 parts = row_str.split("\t")
                 if len(parts) <= text_idx:
@@ -489,15 +494,35 @@ if ($result) {
                     by = int(parts[top_idx]) / scale_y
                     bw = int(parts[width_idx]) / scale_x
                     bh = int(parts[height_idx]) / scale_y
-                    results.append({
+                    line_id = parts[line_idx] if line_idx < len(parts) else "0"
+
+                    entry = {
                         "text": cleaned,
                         "x": int(bx),
                         "y": int(by),
                         "w": int(bw),
-                        "h": int(bh)
-                    })
+                        "h": int(bh),
+                        "_line_id": line_id
+                    }
+                    raw_entries.append(entry)
+                    if line_id not in line_words:
+                        line_words[line_id] = []
+                    line_words[line_id].append(cleaned)
                 except (ValueError, IndexError):
                     continue
+
+            results = []
+            for entry in raw_entries:
+                line_id = entry.pop("_line_id")
+                full_line_text = " ".join(line_words.get(line_id, [entry["text"]]))
+                results.append({
+                    "text": entry["text"],
+                    "x": entry["x"],
+                    "y": entry["y"],
+                    "w": entry["w"],
+                    "h": entry["h"],
+                    "sentence": self.clean_recognized_text(full_line_text)
+                })
 
             return results
         except Exception as e:

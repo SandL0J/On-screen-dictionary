@@ -508,8 +508,8 @@ class HoverTooltip:
         analysis = self._current_data.get("analysis", {})
         article = (self._current_data.get("article") or analysis.get("article") or "").strip()
         plural = (self._current_data.get("plural") or analysis.get("plural") or "").strip()
-        example = self._current_data.get("example_de", "")
-        example_tr = self._current_data.get("example_tr", "")
+        example = (self._current_data.get("context_sentence") or self._current_data.get("example_de") or "").strip()
+        example_tr = (self._current_data.get("example_tr") or "").strip()
 
         if self.db.is_word_saved(german):
             self.db.delete_word_by_german(german)

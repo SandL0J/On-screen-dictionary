@@ -86,6 +86,7 @@ class ResultHUD:
 
         self.auto_hide_id = None
         self._is_mouse_over = False
+        self.context_label = None
 
         self._init_ui()
         self._position_window()
@@ -176,7 +177,7 @@ class ResultHUD:
             padx=12,
             pady=4,
             cursor="hand2",
-            command=self._toggle_save_word
+            command=self._toggle_favorite
         )
         self.btn_save.pack(side="left")
 
@@ -199,6 +200,7 @@ class ResultHUD:
 
     def _render_content(self):
         # Önceki içeriği temizle
+        self.context_label = None
         for widget in self.content_frame.winfo_children():
             widget.destroy()
 
@@ -297,6 +299,20 @@ class ResultHUD:
             )
             tr_label.pack(anchor="w", pady=(4, 4))
 
+            # Bağlam İçi Cümle (Sentence Mining)
+            context_sentence = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
+            if context_sentence:
+                self.context_label = tk.Label(
+                    self.content_frame,
+                    text=f'💬 Bağlam: "{context_sentence}"',
+                    font=("Segoe UI", 9, "italic"),
+                    fg="#a1a1aa",  # Hafif yarı saydam / gri
+                    bg=self.card_bg,
+                    wraplength=340,
+                    justify="left"
+                )
+                self.context_label.pack(anchor="w", pady=(1, 4))
+
             # Kelime Türü ve Alternatif Anlamlar
             dict_entries = self.data.get("dict_entries", [])
             if dict_entries:
@@ -328,9 +344,10 @@ class ResultHUD:
                 )
                 rule_lbl.pack(anchor="w", pady=(4, 2))
 
-            # Örnek Cümle (Varsa)
-            ex_de = self.data.get("example_de", "")
-            if ex_de:
+            # Örnek Cümle (Varsa ve bağlam cümlesinden farklıysa veya Türkçe çevirisi varsa)
+            ex_de = (self.data.get("example_de") or "").strip()
+            ex_tr = (self.data.get("example_tr") or "").strip()
+            if ex_de and (ex_de != context_sentence or ex_tr):
                 ex_frame = tk.Frame(self.content_frame, bg="#1f1f23", padx=8, pady=4)
                 ex_frame.pack(fill="x", pady=(6, 2))
                 ex_de_lbl = tk.Label(
@@ -343,7 +360,6 @@ class ResultHUD:
                     justify="left"
                 )
                 ex_de_lbl.pack(anchor="w")
-                ex_tr = self.data.get("example_tr", "")
                 if ex_tr:
                     ex_tr_lbl = tk.Label(
                         ex_frame,
@@ -379,6 +395,21 @@ class ResultHUD:
                 justify="left"
             )
             tr_lbl.pack(anchor="w", pady=(0, 6))
+
+            # Bağlam Cümlesi (Varsa ve Almanca metinden farklıysa)
+            context_sentence = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
+            german_text = self.data.get("german", "").strip()
+            if context_sentence and context_sentence.lower() != german_text.lower():
+                self.context_label = tk.Label(
+                    self.content_frame,
+                    text=f'💬 Bağlam: "{context_sentence}"',
+                    font=("Segoe UI", 9, "italic"),
+                    fg="#a1a1aa",
+                    bg=self.card_bg,
+                    wraplength=340,
+                    justify="left"
+                )
+                self.context_label.pack(anchor="w", pady=(0, 4))
 
             # Cümle Gramer İpuçları (Modal fiil, bağlaç, fiil sonda kuralı)
             notes = self.data.get("grammar_notes", [])
@@ -433,7 +464,7 @@ class ResultHUD:
         article = self.data.get("article", "").strip()
         plural = self.data.get("plural", "").strip()
         pos = self.data.get("pos", "").strip()
-        ex_de = self.data.get("example_de", "").strip()
+        ex_de = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
         ex_tr = self.data.get("example_tr", "").strip()
 
         if self.db.is_word_saved(german):
@@ -456,6 +487,10 @@ class ResultHUD:
             self.btn_save.configure(text="✓ Kayıtlı", bg="#065f46")
             if self.on_save_callback:
                 self.on_save_callback(german, True)
+
+    def _toggle_favorite(self):
+        """⭐ (Kaydet / _toggle_favorite) Kelime defterine ekler veya çıkarır."""
+        return self._toggle_save_word()
 
     def _copy_translation(self):
         try:
