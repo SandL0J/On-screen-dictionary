@@ -198,6 +198,18 @@ class HoverTooltip:
         self.btn_star.pack(side="right", padx=(4, 2))
         self.btn_star.bind("<Button-1>", lambda e: self._toggle_save())
 
+        # Lemma / Ayrılabilir Fiil İpucu Satırı (Örn. 🔁 ging → gehen · Präteritum veya 🧩 fängt … an → anfangen)
+        self.lbl_lemma_hint = tk.Label(
+            self.outer_frame,
+            text="",
+            font=("Segoe UI", 8, "italic"),
+            fg="#a1a1aa",
+            bg="#18181b",
+            wraplength=340,
+            justify="left",
+            anchor="w",
+        )
+
         # Alt Satır: Türkçe Anlamı
         self.lbl_turkish = tk.Label(
             self.outer_frame,
@@ -233,6 +245,7 @@ class HoverTooltip:
             self.lbl_plural.pack_forget()
             self.btn_star.pack_forget()
             self.lbl_turkish.pack_forget()
+            self.lbl_lemma_hint.pack_forget()
 
             self.btn_close.pack(side="right", padx=(4, 0))
 
@@ -290,6 +303,7 @@ class HoverTooltip:
             self.lbl_plural.pack_forget()
             self.btn_star.pack_forget()
             self.lbl_turkish.pack_forget()
+            self.lbl_lemma_hint.pack_forget()
 
             self.btn_close.pack(side="right", padx=(4, 0))
 
@@ -426,7 +440,8 @@ class HoverTooltip:
 
         # Hızlı Kaydet Yıldızı
         self.btn_star.pack(side="right", padx=(4, 2))
-        if self.db and self.db.is_word_saved(german_word):
+        save_lookup = (word_data.get("lemma") or german_word).strip()
+        if self.db and self.db.is_word_saved(save_lookup):
             self.btn_star.configure(text="★", fg="#eab308")
         else:
             self.btn_star.configure(text="☆", fg="#71717a")
@@ -438,6 +453,15 @@ class HoverTooltip:
         else:
             self.lbl_turkish.configure(text=display_meanings)
         self.lbl_turkish.pack(fill="x", anchor="w", pady=(3, 0))
+
+        # Lemma / Ayrılabilir Fiil İpucu
+        lemma_hint = (word_data.get("lemma_hint") or "").strip()
+        if lemma_hint:
+            self.lbl_lemma_hint.configure(text=lemma_hint)
+            self.lbl_lemma_hint.pack(fill="x", anchor="w", pady=(1, 0))
+        else:
+            self.lbl_lemma_hint.configure(text="")
+            self.lbl_lemma_hint.pack_forget()
 
         # Akıllı Konumlandırma
         self.window.update_idletasks()
@@ -496,6 +520,7 @@ class HoverTooltip:
             return
 
         german = (
+            self._current_data.get("lemma") or
             self._current_data.get("german") or
             self._current_data.get("original") or ""
         ).strip()
@@ -510,11 +535,16 @@ class HoverTooltip:
         plural = (self._current_data.get("plural") or analysis.get("plural") or "").strip()
         example = (self._current_data.get("context_sentence") or self._current_data.get("example_de") or "").strip()
         example_tr = (self._current_data.get("example_tr") or "").strip()
+        surface = (self._current_data.get("surface_form") or "").strip()
+        extra_kwargs = {}
+        if surface:
+            extra_kwargs["surface_form"] = surface
 
         if self.db.is_word_saved(german):
             self.db.delete_word_by_german(german)
             self.btn_star.configure(text="☆", fg="#71717a")
         else:
+            note_text = f"Hover OCR ({surface})" if surface and surface.lower() != german.lower() else "Hover OCR"
             self.db.add_word(
                 german=german,
                 turkish=turkish,
@@ -522,7 +552,8 @@ class HoverTooltip:
                 plural=plural,
                 example_de=example,
                 example_tr=example_tr,
-                notes="Hover OCR",
-                status="learning"
+                notes=note_text,
+                status="learning",
+                **extra_kwargs
             )
             self.btn_star.configure(text="★", fg="#eab308")

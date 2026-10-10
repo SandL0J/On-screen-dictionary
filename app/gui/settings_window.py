@@ -267,6 +267,71 @@ class SettingsWindow:
         )
         cb_top.pack(anchor="w", pady=2)
 
+        # 2b. Güvenlik ve Hassas Veri Uyarılarını Kapat
+        self.var_disable_security = tk.BooleanVar(
+            master=self.window,
+            value=bool(
+                self.config.get("disable_security_filter", False)
+                or self.config.get("hide_security_warnings", False)
+            )
+        )
+        cb_disable_sec = tk.Checkbutton(
+            main_frame,
+            text="🛡️ Güvenlik uyarısını ve korumasını kapat (Hassas veri engellemelerini kaldır)",
+            variable=self.var_disable_security,
+            font=("Segoe UI", 9),
+            fg="#facc15",
+            bg="#18181b",
+            selectcolor="#27272a",
+            activebackground="#18181b",
+            activeforeground="#fafafa"
+        )
+        cb_disable_sec.pack(anchor="w", pady=2)
+
+        tk.Label(
+            main_frame,
+            text="   (İşaretlendiğinde parola, token veya IBAN filtreleri kapatılır, güvenlik uyarısı çıkmaz; 'Kelime bulunamadı' gibi teknik hatalar korunur)",
+            font=("Segoe UI", 7, "italic"),
+            fg="#a1a1aa",
+            bg="#18181b"
+        ).pack(anchor="w", pady=(0, 2))
+
+        # 2c. Sözlük Biçimi ve Ayrılabilir Fiil Tespiti (Lemmatizer)
+        self.var_lemma_lookup = tk.BooleanVar(
+            master=self.window,
+            value=bool(self.config.get("lemma_lookup_enabled", True))
+        )
+        cb_lemma = tk.Checkbutton(
+            main_frame,
+            text="🔁 Kelimenin sözlük biçimini bul (ging → gehen, fängt … an → anfangen)",
+            variable=self.var_lemma_lookup,
+            font=("Segoe UI", 9),
+            fg="#fafafa",
+            bg="#18181b",
+            selectcolor="#27272a",
+            activebackground="#18181b",
+            activeforeground="#fafafa"
+        )
+        cb_lemma.pack(anchor="w", pady=2)
+
+        # 2d. Cümle Dilbilgisi Çözümlemesi Butonu
+        self.var_grammar_analysis = tk.BooleanVar(
+            master=self.window,
+            value=bool(self.config.get("grammar_analysis_enabled", True))
+        )
+        cb_grammar = tk.Checkbutton(
+            main_frame,
+            text="🔍 Cümle dilbilgisi çözümlemesi butonunu göster (Akkusativ/Dativ, fiil konumu)",
+            variable=self.var_grammar_analysis,
+            font=("Segoe UI", 9),
+            fg="#fafafa",
+            bg="#18181b",
+            selectcolor="#27272a",
+            activebackground="#18181b",
+            activeforeground="#fafafa"
+        )
+        cb_grammar.pack(anchor="w", pady=2)
+
         # 3. Otomatik Kapanma Süresi
         duration_frame = tk.Frame(main_frame, bg="#18181b", pady=3)
         duration_frame.pack(fill="x")
@@ -918,6 +983,16 @@ class SettingsWindow:
         self.config["clipboard_auto_lookup"] = self.var_clipboard.get()
         self.config.pop("sound_enabled", None)
         self.config["always_on_top"] = self.var_topmost.get()
+        if hasattr(self, "var_disable_security"):
+            disable_sec = bool(self.var_disable_security.get())
+            self.config["disable_security_filter"] = disable_sec
+            self.config["hide_security_warnings"] = disable_sec
+            self.config["hide_translation_warnings"] = False
+            self.config["show_translation_warnings"] = True
+        if hasattr(self, "var_lemma_lookup"):
+            self.config["lemma_lookup_enabled"] = bool(self.var_lemma_lookup.get())
+        if hasattr(self, "var_grammar_analysis"):
+            self.config["grammar_analysis_enabled"] = bool(self.var_grammar_analysis.get())
         self.config["auto_hide_seconds"] = self.var_duration.get()
         if hasattr(self, "var_history_limit"):
             try:
@@ -1096,6 +1171,12 @@ class SettingsWindow:
         self.var_clipboard.set(DEFAULT_CONFIG.get("clipboard_auto_lookup", False))
         self.var_startup.set(False)
         self.var_topmost.set(DEFAULT_CONFIG.get("always_on_top", True))
+        if hasattr(self, "var_disable_security"):
+            self.var_disable_security.set(DEFAULT_CONFIG.get("disable_security_filter", False))
+        if hasattr(self, "var_lemma_lookup"):
+            self.var_lemma_lookup.set(DEFAULT_CONFIG.get("lemma_lookup_enabled", True))
+        if hasattr(self, "var_grammar_analysis"):
+            self.var_grammar_analysis.set(DEFAULT_CONFIG.get("grammar_analysis_enabled", True))
         self.var_duration.set(DEFAULT_CONFIG.get("auto_hide_seconds", 12))
         if hasattr(self, "var_history_limit"):
             self.var_history_limit.set(DEFAULT_CONFIG.get("history_limit", 100))

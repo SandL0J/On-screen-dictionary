@@ -216,16 +216,8 @@ class GeminiService:
             return None
 
         try:
-            # Markdown ```json bloklarını temizle
-            if raw_json.startswith("```"):
-                lines = raw_json.splitlines()
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].startswith("```"):
-                    lines = lines[:-1]
-                raw_json = "\n".join(lines).strip()
-
-            parsed = json.loads(raw_json)
+            cleaned_json_text = clean_json_markdown(raw_json)
+            parsed = json.loads(cleaned_json_text)
             return self._format_gemini_translation(parsed, clean, self.model)
         except Exception as e:
             print(f"[Gemini Direct JSON Parse Hatası]: {e}")
@@ -314,3 +306,178 @@ class GeminiService:
         )
 
         return self._call_gemini_api(prompt, is_json=False, max_tokens=500, deadline=deadline)
+
+    def analyze_sentence_grammar(self, sentence: str, focus_word: Optional[str] = None, deadline: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """
+        Gemini API üzerinden Almanca cümlenin derin dilbilgisi çözümlemesini (haller, fiiller, yan cümleler) yapar.
+        Önbelleğe uygun ve UI dostu doğrulanmış bir JSON sözlüğü döndürür.
+        """
+        if not self.is_configured():
+            return None
+
+        clean = (sentence or "").strip()
+        if not clean or is_sensitive_clipboard_text(clean):
+            return None
+
+        # Cümle 400 karakterden uzunsa kırp
+        if len(clean) > 400:
+            clean = clean[:400]
+
+        focus_instruction = f'\nÖzellikle şu kelimenin cümledeki dilbilgisi rolünü ("focus_word") incele: "{focus_word}"' if focus_word else ""
+        prompt = (
+            "Sen uzman bir Almanca dilbilgisi (Grammatik) öğretmenisin.\n"
+            "GÖREV: Aşağıdaki Almanca cümlenin derin dilbilgisi çözümlemesini yap ve TÜRKÇE açıkla.\n"
+            "KURALLAR:\n"
+            "1. YALNIZCA geçerli tek bir JSON objesi döndür. Başka hiçbir metin veya markdown ekleme.\n"
+            "2. Almanca terimleri orijinal adıyla kullan (Akkusativ, Dativ, Nominativ, Genitiv, Präteritum, Präsens, Perfekt, Nebensatz, Hauptsatz, V2, V1, vb.).\n"
+            "3. Açıklamalar Türkçe olmalıdır.\n"
+            "4. 'cases' alanında 'case' değeri MUTLAKA 'Nominativ', 'Akkusativ', 'Dativ' veya 'Genitiv' olmalıdır.\n"
+            "5. 'clauses' alanında 'verb_position' değeri 'V2', 'V1' veya 'son' olmalıdır; 'type' değeri 'ana', 'yan' veya 'mastar' olmalıdır.\n"
+            "6. 'verbs' alanında ayrılabilir fiiller için önek ve mastarı belirt.\n"
+            "7. 'tips_tr' alanında en fazla 3 kısa, pratik öğrenme ipucu ver.\n"
+            f"{focus_instruction}\n\n"
+            "İSTENEN JSON ŞEMASI:\n"
+            "{\n"
+            '  "translation_tr": "Cümlenin akıcı Türkçe çevirisi",\n'
+            '  "clauses": [\n'
+            '    {"text": "cümle parçası", "type": "ana", "conjunction": null, "verb_position": "V2", "explanation_tr": "açıklama"}\n'
+            '  ],\n'
+            '  "verbs": [\n'
+            '    {"surface": "fängt ... an", "lemma": "anfangen", "tense": "Präsens", "separable_prefix": "an", "is_modal": false, "position_note_tr": "açıklama"}\n'
+            '  ],\n'
+            '  "cases": [\n'
+            '    {"phrase": "den Hund", "case": "Akkusativ", "reason_tr": "doğrudan nesne / geçişli fiil"}\n'
+            '  ],\n'
+            '  "focus_word": {"surface": "kelime", "lemma": "mastar", "role_tr": "cümledeki rolü"},\n'
+            '  "tips_tr": ["ipucu 1", "ipucu 2"]\n'
+            "}\n\n"
+            f'Almanca Cümle: "{clean}"'
+        )
+
+        raw_json = self._call_gemini_api(prompt, is_json=True, max_tokens=1500, deadline=deadline)
+        if not raw_json:
+            return None
+
+        try:
+            cleaned_json_text = clean_json_markdown(raw_json)
+            parsed = json.loads(cleaned_json_text)
+            if not isinstance(parsed, dict):
+                return None
+            return self._format_grammar_analysis(parsed, clean, self.model)
+        except Exception as e:
+            # Güvenlik gereği yanıt içeriğini değil, yalnızca hata tipini logla
+            print(f"[Gemini Grammar JSON Parse Hatası]: {type(e).__name__}")
+            return None
+
+    def _format_grammar_analysis(self, parsed: dict, original_sentence: str, model_name: str) -> Optional[Dict[str, Any]]:
+        """Gemini dilbilgisi JSON çıktısını doğrular ve sınırlandırır."""
+        translation_tr = str(parsed.get("translation_tr", "")).strip()[:300]
+        if not translation_tr:
+            return None
+
+        # 1. Clauses (Yan ve Ana Cümleler - En fazla 6)
+        valid_clauses = []
+        raw_clauses = parsed.get("clauses", [])
+        if isinstance(raw_clauses, list):
+            for c in raw_clauses[:6]:
+                if not isinstance(c, dict):
+                    continue
+                c_type = str(c.get("type", "")).strip().lower()
+                if c_type not in ("ana", "yan", "mastar"):
+                    c_type = "ana"
+                conj = c.get("conjunction")
+                conj_str = str(conj).strip()[:50] if conj else None
+                verb_pos = str(c.get("verb_position", "")).strip()
+                if verb_pos not in ("V2", "V1", "son"):
+                    verb_pos = ""
+                valid_clauses.append({
+                    "text": str(c.get("text", "")).strip()[:300],
+                    "type": c_type,
+                    "conjunction": conj_str,
+                    "verb_position": verb_pos,
+                    "explanation_tr": str(c.get("explanation_tr", "")).strip()[:300],
+                })
+
+        # 2. Verbs (Fiiller - En fazla 6)
+        valid_verbs = []
+        raw_verbs = parsed.get("verbs", [])
+        if isinstance(raw_verbs, list):
+            for v in raw_verbs[:6]:
+                if not isinstance(v, dict):
+                    continue
+                sep_pfx = v.get("separable_prefix")
+                sep_str = str(sep_pfx).strip()[:50] if sep_pfx else None
+                valid_verbs.append({
+                    "surface": str(v.get("surface", "")).strip()[:100],
+                    "lemma": str(v.get("lemma", "")).strip()[:100],
+                    "tense": str(v.get("tense", "")).strip()[:50],
+                    "separable_prefix": sep_str,
+                    "is_modal": bool(v.get("is_modal", False)),
+                    "position_note_tr": str(v.get("position_note_tr", "")).strip()[:300],
+                })
+
+        # 3. Cases (Haller - En fazla 10)
+        valid_case_names = {"Nominativ", "Akkusativ", "Dativ", "Genitiv"}
+        valid_cases = []
+        raw_cases = parsed.get("cases", [])
+        if isinstance(raw_cases, list):
+            for cs in raw_cases[:10]:
+                if not isinstance(cs, dict):
+                    continue
+                c_name = str(cs.get("case", "")).strip()
+                if c_name not in valid_case_names:
+                    if c_name.capitalize() in valid_case_names:
+                        c_name = c_name.capitalize()
+                    else:
+                        continue  # Geçersiz hal değerini atla
+                valid_cases.append({
+                    "phrase": str(cs.get("phrase", "")).strip()[:100],
+                    "case": c_name,
+                    "reason_tr": str(cs.get("reason_tr", "")).strip()[:300],
+                })
+
+        # 4. Focus Word (Odak Kelime)
+        focus_dict = None
+        raw_fw = parsed.get("focus_word")
+        if isinstance(raw_fw, dict) and any(raw_fw.values()):
+            focus_dict = {
+                "surface": str(raw_fw.get("surface", "")).strip()[:100],
+                "lemma": str(raw_fw.get("lemma", "")).strip()[:100],
+                "role_tr": str(raw_fw.get("role_tr", "")).strip()[:300],
+            }
+
+        # 5. Tips (İpuçları - En fazla 3)
+        valid_tips = []
+        raw_tips = parsed.get("tips_tr", [])
+        if isinstance(raw_tips, list):
+            for t in raw_tips[:3]:
+                t_str = str(t).strip()[:300]
+                if t_str:
+                    valid_tips.append(t_str)
+
+        return {
+            "sentence": original_sentence,
+            "translation_tr": translation_tr,
+            "clauses": valid_clauses,
+            "verbs": valid_verbs,
+            "cases": valid_cases,
+            "focus_word": focus_dict,
+            "tips_tr": valid_tips,
+            "model_used": model_name,
+            "source": "gemini_grammar",
+        }
+
+
+def clean_json_markdown(raw_text: str) -> str:
+    """Markdown ```json ve ``` bloklarını temizler."""
+    if not raw_text:
+        return ""
+    text = raw_text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text

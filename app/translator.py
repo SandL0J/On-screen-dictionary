@@ -508,3 +508,53 @@ class TranslationEngine:
             "pronoun": "Zamir (Pronomen)"
         }
         return mapping.get(pos_name.lower(), pos_name.capitalize())
+
+    def analyze_grammar(self, sentence: str, focus_word: Optional[str] = None, timeout_budget: float = 12.0) -> Dict[str, Any]:
+        """
+        Cümle için derin dilbilgisi çözümlemesi yapar.
+        Gemini yapılandırılmışsa AI tabanlı derin analiz (Akkusativ/Dativ, fiil pozisyonu, yan cümleler) döner.
+        Gemini yoksa veya başarısız olursa kural tabanlı analiz (analyze_sentence_grammar) döner.
+        """
+        clean_sentence = clean_text(sentence)
+        if not clean_sentence:
+            return {"error": "Boş cümle"}
+
+        model = self.gemini_service.model if hasattr(self.gemini_service, "model") else "gemini"
+        cache_key = f"grammar::{model}::{clean_sentence}"
+        if focus_word and focus_word.strip():
+            cache_key += f"::{focus_word.strip().lower()}"
+
+        # 1. Önbellek kontrolü
+        try:
+            cached = self.db.get_cache(cache_key)
+            if cached and isinstance(cached, dict) and cached.get("source") == "gemini_grammar":
+                cached_copy = dict(cached)
+                cached_copy["from_cache"] = True
+                return cached_copy
+        except Exception as e:
+            print(f"[Grammar Cache Get Hatası]: {e}")
+
+        # 2. Gemini Yapılandırılmışsa AI ile analiz et
+        deadline = time.monotonic() + timeout_budget
+        if self.gemini_service.is_configured():
+            try:
+                gemini_res = self.gemini_service.analyze_sentence_grammar(clean_sentence, focus_word=focus_word, deadline=deadline)
+                if gemini_res and isinstance(gemini_res, dict) and gemini_res.get("translation_tr"):
+                    # Başarılı sonucu önbelleğe yaz
+                    try:
+                        self.db.set_cache(cache_key, gemini_res)
+                    except Exception as e:
+                        print(f"[Grammar Cache Set Hatası]: {e}")
+                    return dict(gemini_res)
+            except Exception as e:
+                print(f"[Gemini Grammar Çağrı Hatası]: {e}")
+
+        # 3. Gemini yok veya başarısız olduysa: Kural tabanlı geri dönüş (Fallback)
+        rule_notes = analyze_sentence_grammar(clean_sentence)
+        needs_gemini = not self.gemini_service.is_configured()
+        return {
+            "source": "rule_based",
+            "rule_notes": rule_notes,
+            "needs_gemini": needs_gemini,
+            "sentence": clean_sentence
+        }

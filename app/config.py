@@ -33,6 +33,12 @@ DEFAULT_CONFIG = {
     "first_run_completed": False,
     "tesseract_cmd": "",
     "ocr_engine_preference": "auto",
+    "disable_security_filter": False,
+    "hide_security_warnings": False,
+    "hide_translation_warnings": False,
+    "show_translation_warnings": True,
+    "lemma_lookup_enabled": True,
+    "grammar_analysis_enabled": True,
 }
 
 from app.paths import get_config_path

@@ -10,16 +10,34 @@ from typing import Dict, Any, Optional, Callable
 from app.gui.hover_tooltip import get_monitor_work_area
 
 
+def _is_security_warning(data: Dict[str, Any]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    err = str(data.get("error", ""))
+    err_lower = err.lower()
+    return "güvenlik" in err_lower or "hassas veri" in err_lower
+
+
+def _should_suppress_security(config: Optional[dict]) -> bool:
+    if not config:
+        return False
+    return bool(
+        config.get("disable_security_filter", False)
+        or config.get("hide_security_warnings", False)
+    )
+
+
 class ResultHUD:
     _instance: Optional['ResultHUD'] = None
 
     @classmethod
-    def show_result(cls, root: tk.Tk, data: Dict[str, Any], *args, db=None, config: dict = None, tts_engine=None, on_save_callback: Optional[Callable] = None, **kwargs):
+    def show_result(cls, root: tk.Tk, data: Dict[str, Any], *args, db=None, config: dict = None, tts_engine=None, on_save_callback: Optional[Callable] = None, on_grammar_request: Optional[Callable[[str, Optional[str]], None]] = None, **kwargs):
         """Mevcut açık pencere varsa günceller, yoksa yenisini açar."""
         resolved_db = db
         resolved_config = config
         resolved_tts = tts_engine
         resolved_callback = on_save_callback
+        resolved_grammar = on_grammar_request or kwargs.get("on_grammar_request")
 
         if resolved_db is None and len(args) > 0:
             if hasattr(args[0], 'is_word_saved') or hasattr(args[0], 'get_word'):
@@ -37,19 +55,26 @@ class ResultHUD:
                 if len(args) > 3 and resolved_callback is None:
                     resolved_callback = args[3]
 
+        cfg = resolved_config if resolved_config is not None else (cls._instance.config if cls._instance else {})
+        if _is_security_warning(data) and _should_suppress_security(cfg):
+            if cls._instance and cls._instance.is_alive():
+                cls._instance.close()
+            return
+
         if cls._instance and cls._instance.is_alive():
-            cls._instance.update_data(data)
+            cls._instance.update_data(data, on_grammar_request=resolved_grammar)
         else:
             cls._instance = ResultHUD(
                 root, data,
                 db=resolved_db,
                 config=resolved_config,
                 tts_engine=resolved_tts,
-                on_save_callback=resolved_callback
+                on_save_callback=resolved_callback,
+                on_grammar_request=resolved_grammar
             )
         cls._instance.bring_to_front()
 
-    def __init__(self, root: tk.Tk, data: Dict[str, Any], *args, db=None, config: dict = None, tts_engine=None, on_save_callback: Optional[Callable] = None, **kwargs):
+    def __init__(self, root: tk.Tk, data: Dict[str, Any], *args, db=None, config: dict = None, tts_engine=None, on_save_callback: Optional[Callable] = None, on_grammar_request: Optional[Callable[[str, Optional[str]], None]] = None, **kwargs):
         resolved_db = db
         resolved_config = config
         resolved_tts = tts_engine
@@ -77,6 +102,7 @@ class ResultHUD:
         self.db = resolved_db
         self.config = resolved_config or {}
         self.on_save_callback = resolved_callback
+        self.on_grammar_request = on_grammar_request
 
         self.window = tk.Toplevel(root)
         self.window.title("Ekran Sözlüğü - Çeviri")
@@ -87,6 +113,11 @@ class ResultHUD:
         self.auto_hide_id = None
         self._is_mouse_over = False
         self.context_label = None
+
+        if _is_security_warning(self.data) and _should_suppress_security(self.config):
+            self.window.withdraw()
+            self.close()
+            return
 
         self._init_ui()
         self._position_window()
@@ -154,8 +185,6 @@ class ResultHUD:
         self.content_frame = tk.Frame(self.main_frame, bg=self.card_bg, padx=12, pady=10)
         self.content_frame.pack(fill="both", expand=True)
 
-        self._render_content()
-
         # 3. ALT BUTONLAR (Deftere Ekle, Kopyala)
         self.footer_frame = tk.Frame(self.main_frame, bg=self.bg_color)
         self.footer_frame.pack(fill="x", pady=(10, 0))
@@ -181,6 +210,22 @@ class ResultHUD:
         )
         self.btn_save.pack(side="left")
 
+        # Dilbilgisi Çözümlemesi Butonu
+        self.btn_grammar = tk.Button(
+            self.footer_frame,
+            text="🔍 Dilbilgisi",
+            font=("Segoe UI", 9, "bold"),
+            bg="#27272a",
+            fg="#a78bfa",
+            activebackground="#3f3f46",
+            activeforeground="#c4b5fd",
+            relief="flat",
+            padx=10,
+            pady=4,
+            cursor="hand2",
+            command=self._on_grammar_click
+        )
+
         # Kopyala Butonu
         self.btn_copy = tk.Button(
             self.footer_frame,
@@ -198,6 +243,8 @@ class ResultHUD:
         )
         self.btn_copy.pack(side="right")
 
+        self._render_content()
+
     def _render_content(self):
         # Önceki içeriği temizle
         self.context_label = None
@@ -206,6 +253,9 @@ class ResultHUD:
 
         # Hata durumu kontrolü (ör. çevrimdışı veya geçersiz metin)
         if "error" in self.data:
+            if _is_security_warning(self.data) and _should_suppress_security(self.config):
+                self.close()
+                return
             err_msg = str(self.data.get("error", "Bilinmeyen çeviri hatası"))
             self.app_title.configure(text="EKRAN SÖZLÜĞÜ • BİLGİ")
 
@@ -232,10 +282,22 @@ class ResultHUD:
 
             if hasattr(self, "btn_save"):
                 self.btn_save.pack_forget()
+            if hasattr(self, "btn_grammar"):
+                self.btn_grammar.pack_forget()
             return
 
         if hasattr(self, "btn_save") and hasattr(self, "footer_frame"):
             self.btn_save.pack(side="left")
+
+        # Dilbilgisi butonu görünürlüğü
+        grammar_enabled = bool(self.config.get("grammar_analysis_enabled", True))
+        is_sentence = bool(self.data.get("is_sentence", False))
+        has_context = bool((self.data.get("context_sentence") or self.data.get("example_de") or "").strip())
+        if hasattr(self, "btn_grammar") and hasattr(self, "footer_frame"):
+            if callable(self.on_grammar_request) and grammar_enabled and (is_sentence or has_context):
+                self.btn_grammar.pack(side="left", padx=(6, 0))
+            else:
+                self.btn_grammar.pack_forget()
 
         is_sentence = self.data.get("is_sentence", False)
         direction = self.data.get("direction", "de_to_tr")
@@ -284,6 +346,20 @@ class ResultHUD:
                     bg=self.card_bg
                 )
                 plural_label.pack(anchor="w", pady=(2, 4))
+
+            # Sözlük Biçimi ve Ayrılabilir Fiil İpucu (Lemma Hint)
+            lemma_hint = (self.data.get("lemma_hint") or "").strip()
+            if lemma_hint:
+                lemma_label = tk.Label(
+                    self.content_frame,
+                    text=lemma_hint,
+                    font=("Segoe UI", 9, "italic"),
+                    fg="#a1a1aa",
+                    bg=self.card_bg,
+                    wraplength=340,
+                    justify="left"
+                )
+                lemma_label.pack(anchor="w", pady=(1, 3))
 
             # Türkçe Anlamı
             tr_text = self.data.get("turkish", "")
@@ -440,11 +516,17 @@ class ResultHUD:
                     )
                     n_txt.pack(anchor="w", pady=(0, 3))
 
-    def update_data(self, data: Dict[str, Any]):
+    def update_data(self, data: Dict[str, Any], on_grammar_request: Optional[Callable[[str, Optional[str]], None]] = None):
         """Açık olan kartın içeriğini yeni aramayla günceller."""
+        if _is_security_warning(data) and _should_suppress_security(self.config):
+            self.close()
+            return
+        if on_grammar_request is not None:
+            self.on_grammar_request = on_grammar_request
         self.data = data
         self._render_content()
-        is_saved = self.db.is_word_saved(self.data.get("german", "")) if self.db else False
+        save_lookup = (self.data.get("lemma") or self.data.get("german", "")).strip()
+        is_saved = self.db.is_word_saved(save_lookup) if self.db else False
         self.btn_save.configure(
             text="✓ Kayıtlı" if is_saved else "⭐ Deftere Ekle",
             bg="#065f46" if is_saved else "#6366f1"
@@ -455,10 +537,24 @@ class ResultHUD:
         """Dinleme özelliği devre dışı bırakılmıştır."""
         pass
 
+    def _on_grammar_click(self):
+        """🔍 Dilbilgisi butonuna tıklandığında derin gramer çözümlemesini tetikler."""
+        if not self.on_grammar_request:
+            return
+        is_sentence = bool(self.data.get("is_sentence", False))
+        if is_sentence:
+            sentence = (self.data.get("german") or self.data.get("original") or "").strip()
+            focus_word = None
+        else:
+            sentence = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
+            focus_word = (self.data.get("surface_form") or self.data.get("german") or "").strip()
+        if sentence:
+            self.on_grammar_request(sentence, focus_word)
+
     def _toggle_save_word(self):
-        german = self.data.get("german", "").strip()
+        save_german = (self.data.get("lemma") or self.data.get("german", "")).strip()
         turkish = self.data.get("turkish", "").strip()
-        if not german or not self.db:
+        if not save_german or not self.db:
             return
 
         article = self.data.get("article", "").strip()
@@ -466,27 +562,34 @@ class ResultHUD:
         pos = self.data.get("pos", "").strip()
         ex_de = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
         ex_tr = self.data.get("example_tr", "").strip()
+        surface = (self.data.get("surface_form") or "").strip()
+        extra_kwargs = {}
+        if surface:
+            extra_kwargs["surface_form"] = surface
 
-        if self.db.is_word_saved(german):
+        if self.db.is_word_saved(save_german):
             # Kayıtlıysa sil (Toggle)
-            self.db.delete_word_by_german(german)
+            self.db.delete_word_by_german(save_german)
             self.btn_save.configure(text="⭐ Deftere Ekle", bg="#6366f1")
             if self.on_save_callback:
-                self.on_save_callback(german, False)
+                self.on_save_callback(save_german, False)
         else:
+            note_text = f"Kelime ({surface})" if surface and surface.lower() != save_german.lower() else ""
             self.db.add_word(
-                german=german,
+                german=save_german,
                 turkish=turkish,
                 article=article,
                 plural=plural,
                 part_of_speech=pos,
                 example_de=ex_de,
                 example_tr=ex_tr,
-                status="learning"
+                notes=note_text,
+                status="learning",
+                **extra_kwargs
             )
             self.btn_save.configure(text="✓ Kayıtlı", bg="#065f46")
             if self.on_save_callback:
-                self.on_save_callback(german, True)
+                self.on_save_callback(save_german, True)
 
     def _toggle_favorite(self):
         """⭐ (Kaydet / _toggle_favorite) Kelime defterine ekler veya çıkarır."""

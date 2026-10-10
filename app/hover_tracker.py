@@ -17,6 +17,7 @@ from typing import Callable, Optional, Dict, Any, Tuple
 from PIL import Image
 
 from app.security import is_sensitive_clipboard_text
+from app.lemmatizer import resolve_lemma, format_lemma_hint
 
 try:
     user32 = ctypes.windll.user32
@@ -204,6 +205,7 @@ class HoverTracker:
         crop_width: int = 440,
         crop_height: int = 120,
         worker_pool: Optional[Any] = None,
+        config: Optional[dict] = None,
     ):
         self.ocr_engine = ocr_engine
         self.translator = translator
@@ -212,6 +214,7 @@ class HoverTracker:
         self.on_loading = on_loading
         self.on_not_found = on_not_found
         self.worker_pool = worker_pool
+        self.config = config or {}
 
         self.hover_delay_sec = max(hover_delay_ms, 150) / 1000.0
         self.trigger_mode = trigger_mode.lower()
@@ -606,7 +609,8 @@ class HoverTracker:
                 screen_y2 = screen_y1 + target_box["h"]
 
                 self._active_word = cleaned_word
-                if is_sensitive_clipboard_text(cleaned_word):
+                is_sec_off = bool(getattr(self, "config", {}).get("disable_security_filter", False) or getattr(self, "config", {}).get("hide_security_warnings", False))
+                if not is_sec_off and is_sensitive_clipboard_text(cleaned_word):
                     print("[Ekran Sozlugu] Hassas veri engellendi (Hover).")
                     self._trigger_not_found_feedback(cursor_x, cursor_y)
                     return
@@ -620,8 +624,31 @@ class HoverTracker:
 
                 try:
                     sentence = (target_box.get("sentence") or "").strip()
-                    result_data = self.translator.translate_and_analyze(cleaned_word)
+                    lemma_enabled = bool(getattr(self, "config", {}).get("lemma_lookup_enabled", True))
+                    lemma_res = resolve_lemma(cleaned_word, sentence) if lemma_enabled else None
+                    lookup_word = lemma_res.lemma if lemma_res and lemma_res.confidence in ("high", "medium") and lemma_res.lemma.lower() != cleaned_word.lower() else cleaned_word
+                    result_data = self.translator.translate_and_analyze(lookup_word)
+                    if lookup_word != cleaned_word and (not result_data or "error" in result_data):
+                        result_data = self.translator.translate_and_analyze(cleaned_word)
+                        lookup_word = cleaned_word
+
                     if result_data:
+                        result_data = dict(result_data)
+                        if lookup_word != cleaned_word and lemma_res:
+                            result_data["surface_form"] = cleaned_word
+                            result_data["lemma"] = lemma_res.lemma
+                            result_data["lemma_form"] = lemma_res.form_label
+                            result_data["separable_prefix"] = lemma_res.separable_prefix
+                            result_data["lemma_hint"] = format_lemma_hint(lemma_res)
+                        elif lemma_res and lemma_res.confidence in ("high", "medium"):
+                            hint = format_lemma_hint(lemma_res)
+                            if hint:
+                                result_data["surface_form"] = cleaned_word
+                                result_data["lemma"] = lemma_res.lemma
+                                result_data["lemma_form"] = lemma_res.form_label
+                                result_data["separable_prefix"] = lemma_res.separable_prefix
+                                result_data["lemma_hint"] = hint
+
                         result_data["context_sentence"] = sentence
                         if sentence and not result_data.get("example_de"):
                             result_data["example_de"] = sentence

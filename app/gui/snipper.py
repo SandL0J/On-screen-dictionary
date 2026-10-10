@@ -27,13 +27,15 @@ class ScreenSnipper:
         ocr_engine,
         on_text_extracted: Callable[[str], None],
         post_to_ui: Optional[Callable[[Callable], None]] = None,
-        worker_pool: Optional[Any] = None
+        worker_pool: Optional[Any] = None,
+        config: Optional[dict] = None
     ):
         self.root = root
         self.ocr_engine = ocr_engine
         self.on_text_extracted = on_text_extracted
         self.post_to_ui = post_to_ui
         self.worker_pool = worker_pool
+        self.config = config or {}
 
         self.overlay: Optional[tk.Toplevel] = None
         self.canvas: Optional[tk.Canvas] = None

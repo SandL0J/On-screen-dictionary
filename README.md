@@ -74,6 +74,21 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 - Daha önce aranan tüm kelimeler ve çeviriler yerel SQLite önbelleğinde saklanır.
 - İnternet bağlantınız olmasa dahi önbellekteki kelimelere anında yanıt verir ve gereksiz kota tüketmez.
 
+### 8. 🧩 Sözlük Biçimi (Lemma) ve Ayrılabilir Fiil Tespiti
+- Çekimli fiillerin (`ging`, `flog`, `sprach`) sözlük biçimini (mastar / Lemma: `gehen`, `fliegen`, `sprechen`) ve zaman kipini (`Präteritum`, `Partizip II`) anında tespit eder.
+- Cümle içindeki ayrılabilir fiilleri (`Er fängt morgen an.` → `anfangen`) bağlamdan yakalar ve hem çekimli fiil hem de cümlenin sonundaki ön ek (`an`) üzerinde sözlük anlamını sunar.
+- Kelime defterine eklerken sözlük biçimini (`gehen`, `anfangen`) yüzey formu (`ging`, `fängt`) ile birlikte kaydeder.
+
+### 9. 🔍 Akıllı Cümle Dilbilgisi Çözümlemesi (Grammar Panel)
+- Sonuç kartındaki (HUD) **`🔍 Dilbilgisi`** butonuna tıklayarak cümlenin tüm dilbilgisi yapısını detaylı inceleyebilirsiniz.
+- Gemini AI desteğiyle:
+  - Cümlenin Türkçe çevirisi,
+  - Yan ve ana cümle yapısı (Hauptsatz, Nebensatz, bağlaçlar ve fiil pozisyonu: V2, V1, sonda),
+  - Fiiller, mastar halleri, zaman kipleri ve ayrılabilir ön ekler,
+  - İsimlerin ve zamirlerin cümledeki halleri (**Nominativ**, **Akkusativ**, **Dativ**, **Genitiv**) ve rolleri (Özne, Nesne),
+  - Cümleye özel Almanca öğrenme ipuçları şık renkli rozetlerle sunulur.
+- Çevrimdışı veya API anahtarsız kullanımda yerel kural tabanlı gramer ipuçları devreye girer.
+
 ---
 
 ## ⌨️ Global Kısayol Tuşları (Tam Ekran ve Video Dostu)

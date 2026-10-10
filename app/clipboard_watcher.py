@@ -106,12 +106,14 @@ class ClipboardWatcher:
         self,
         on_text_detected: Optional[Callable[[str], None]] = None,
         check_interval: float = 0.35,
-        enabled: bool = False
+        enabled: bool = False,
+        config: Optional[dict] = None
     ):
         self.on_text_detected = on_text_detected or (lambda t: None)
         self.check_interval = check_interval
         self._running = False
         self._enabled = enabled
+        self.config = config or {}
         self._thread: Optional[threading.Thread] = None
         self._last_text = ""
 
@@ -157,7 +159,8 @@ class ClipboardWatcher:
         if len(text) > 500:  # Çok uzun metinleri atla
             return False
         # Hassas pano verilerini filtrele (parola, API anahtarı, token, IBAN, kart vb.)
-        if is_sensitive_clipboard_text(text):
+        is_sec_off = bool(getattr(self, "config", {}).get("disable_security_filter", False) or getattr(self, "config", {}).get("hide_security_warnings", False))
+        if not is_sec_off and is_sensitive_clipboard_text(text):
             return False
         # Sadece sayılardan mı oluşuyor?
         if text.replace(" ", "").isdigit():

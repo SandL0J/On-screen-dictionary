@@ -20,6 +20,8 @@ from app.hotkey_manager import HotkeyManager, format_hotkey
 from app.clipboard_watcher import get_clipboard_text, copy_selected_text_windows
 from app.security import check_sensitive_clipboard
 from app.worker_pool import WorkerThreadPool
+from app.german_analyzer import is_single_word
+from app.lemmatizer import resolve_lemma, format_lemma_hint
 
 
 class MainOverlay:
@@ -80,7 +82,14 @@ class MainOverlay:
         self.root.attributes("-alpha", 0.96)
 
         # Snipper başlatıcı
-        self.snipper = ScreenSnipper(self.root, self.ocr, self.lookup_text, post_to_ui=self.post_to_ui, worker_pool=self._worker_pool)
+        self.snipper = ScreenSnipper(
+            self.root,
+            self.ocr,
+            self.lookup_text,
+            post_to_ui=self.post_to_ui,
+            worker_pool=self._worker_pool,
+            config=self.config
+        )
 
         # Canlı Hover Tooltip ve Takipçisi (İş parçacığı güvenli sarmalayıcılar ile)
         self.hover_tooltip = HoverTooltip(
@@ -112,6 +121,9 @@ class MainOverlay:
         def _safe_hover_not_found(x, y):
             self.post_to_ui(self.hover_tooltip.show_message, x, y, "⚠️ Kelime bulunamadı", 1300)
 
+        if getattr(self, "clipboard_watcher", None) and hasattr(self.clipboard_watcher, "config"):
+            self.clipboard_watcher.config = self.config
+
         self.hover_tracker = HoverTracker(
             ocr_engine=self.ocr,
             translator=self.translator,
@@ -123,6 +135,7 @@ class MainOverlay:
             trigger_mode=self.config.get("hover_trigger_mode", "mouse_side"),
             enabled=self.config.get("hover_enabled", True),
             worker_pool=self._worker_pool,
+            config=self.config,
         )
         self.hover_tracker.start()
 
@@ -506,16 +519,18 @@ class MainOverlay:
                 if self.clipboard_watcher:
                     self.clipboard_watcher._last_text = clean_text
 
-                # Hassas veri kontrolü (parola, API anahtarı, token, IBAN, kart vb.)
-                is_sens, reason = check_sensitive_clipboard(clean_text)
-                if is_sens:
-                    sensitive_msg = {
-                        "error": f"🛡️ Güvenlik Koruması:\n"
-                                 f"Kopyalanan metin hassas veri ({reason}) kalıbı "
-                                 f"içerdiği için otomatik çeviriye gönderilmedi."
-                    }
-                    self._safe_after(0, lambda: self._show_hud(sensitive_msg))
-                    return
+                is_sec_off = bool(self.config.get("disable_security_filter", False) or self.config.get("hide_security_warnings", False))
+                if not is_sec_off:
+                    # Hassas veri kontrolü (parola, API anahtarı, token, IBAN, kart vb.)
+                    is_sens, reason = check_sensitive_clipboard(clean_text)
+                    if is_sens:
+                        sensitive_msg = {
+                            "error": f"🛡️ Güvenlik Koruması:\n"
+                                     f"Kopyalanan metin hassas veri ({reason}) kalıbı "
+                                     f"içerdiği için otomatik çeviriye gönderilmedi."
+                        }
+                        self._safe_after(0, lambda: self._show_hud(sensitive_msg))
+                        return
 
                 self._safe_after(0, lambda: self.lookup_text(clean_text))
             else:
@@ -632,15 +647,17 @@ class MainOverlay:
             return None
 
         # Hassas veri kontrolü (OCR snip ve doğrudan aramalarda veri sızıntısını engeller)
-        is_sens, reason = check_sensitive_clipboard(text)
-        if is_sens:
-            sensitive_msg = {
-                "error": f"🛡️ Güvenlik Koruması:\n"
-                         f"Metin hassas veri ({reason}) kalıbı "
-                         f"içerdiği için çeviriye gönderilmedi."
-            }
-            self._safe_after(0, lambda: self._show_hud(sensitive_msg))
-            return None
+        is_sec_off = bool(self.config.get("disable_security_filter", False) or self.config.get("hide_security_warnings", False))
+        if not is_sec_off:
+            is_sens, reason = check_sensitive_clipboard(text)
+            if is_sens:
+                sensitive_msg = {
+                    "error": f"🛡️ Güvenlik Koruması:\n"
+                             f"Metin hassas veri ({reason}) kalıbı "
+                             f"içerdiği için çeviriye gönderilmedi."
+                }
+                self._safe_after(0, lambda: self._show_hud(sensitive_msg))
+                return None
 
         with self._lookup_lock:
             if self._is_stopped:
@@ -650,7 +667,36 @@ class MainOverlay:
 
         def _worker():
             try:
-                res = self.translator.translate_and_analyze(text)
+                cleaned_text = text.strip()
+                lookup_target = cleaned_text
+                lemma_res = None
+                if is_single_word(cleaned_text) and self.config.get("lemma_lookup_enabled", True):
+                    lemma_res = resolve_lemma(cleaned_text)
+                    if lemma_res and lemma_res.confidence in ("high", "medium") and lemma_res.lemma.lower() != cleaned_text.lower():
+                        lookup_target = lemma_res.lemma
+
+                res = self.translator.translate_and_analyze(lookup_target)
+                if lookup_target != cleaned_text and (not res or "error" in res):
+                    res = self.translator.translate_and_analyze(cleaned_text)
+                    lookup_target = cleaned_text
+
+                if res:
+                    res = dict(res)
+                    if lookup_target != cleaned_text and lemma_res:
+                        res["surface_form"] = cleaned_text
+                        res["lemma"] = lemma_res.lemma
+                        res["lemma_form"] = lemma_res.form_label
+                        res["separable_prefix"] = lemma_res.separable_prefix
+                        res["lemma_hint"] = format_lemma_hint(lemma_res)
+                    elif lemma_res and lemma_res.confidence in ("high", "medium"):
+                        hint = format_lemma_hint(lemma_res)
+                        if hint:
+                            res["surface_form"] = cleaned_text
+                            res["lemma"] = lemma_res.lemma
+                            res["lemma_form"] = lemma_res.form_label
+                            res["separable_prefix"] = lemma_res.separable_prefix
+                            res["lemma_hint"] = hint
+
                 def _ui_dispatch():
                     with self._lookup_lock:
                         if self._is_stopped:
@@ -667,12 +713,58 @@ class MainOverlay:
         return self._worker_pool.submit(_worker)
 
     def _show_hud(self, result_data: dict):
+        if "error" in result_data:
+            err_str = str(result_data.get("error", ""))
+            err_lower = err_str.lower()
+            if "güvenlik" in err_lower or "hassas veri" in err_lower:
+                if self.config.get("disable_security_filter", False) or self.config.get("hide_security_warnings", False):
+                    return
         ResultHUD.show_result(
             self.root,
             result_data,
             db=self.db,
-            config=self.config
+            config=self.config,
+            on_grammar_request=self._request_grammar
         )
+
+    def _request_grammar(self, sentence: str, focus_word: Optional[str] = None):
+        """Kullanıcı '🔍 Dilbilgisi' butonuna bastığında asenkron olarak analizi başlatır."""
+        if not sentence or not sentence.strip():
+            return
+        clean_sentence = sentence.strip()
+
+        with self._lookup_lock:
+            if self._is_stopped:
+                return
+            if not hasattr(self, "_grammar_generation"):
+                self._grammar_generation = 0
+            self._grammar_generation += 1
+            gen_id = self._grammar_generation
+
+        from app.gui.grammar_panel import GrammarPanel
+        panel = GrammarPanel.get_or_create(self.root, clean_sentence)
+        panel.show_loading()
+
+        def _worker():
+            try:
+                grammar_data = self.translator.analyze_grammar(clean_sentence, focus_word=focus_word)
+                def _ui_dispatch():
+                    with self._lookup_lock:
+                        if self._is_stopped:
+                            return
+                        if gen_id != getattr(self, "_grammar_generation", 0):
+                            return
+                        if panel.is_alive():
+                            panel.show_result(grammar_data)
+                self.post_to_ui(_ui_dispatch)
+            except Exception as e:
+                print(f"[Dilbilgisi Analizi Hatası]: {e}")
+                def _err_dispatch():
+                    if panel.is_alive():
+                        panel.show_error(f"Analiz sırasında beklenmeyen bir hata oluştu: {e}")
+                self.post_to_ui(_err_dispatch)
+
+        self._worker_pool.submit(_worker)
 
     def _start_ocr_snip(self):
         self.snipper.start_selection()
@@ -804,6 +896,13 @@ class MainOverlay:
             self.ocr.set_tesseract_cmd(new_config["tesseract_cmd"])
         if hasattr(self.ocr, "set_preference") and "ocr_engine_preference" in new_config:
             self.ocr.set_preference(new_config["ocr_engine_preference"])
+
+        if hasattr(self, "snipper") and self.snipper:
+            self.snipper.config = new_config
+        if hasattr(self, "clipboard_watcher") and self.clipboard_watcher:
+            self.clipboard_watcher.config = new_config
+        if hasattr(self, "hover_tracker") and self.hover_tracker:
+            self.hover_tracker.config = new_config
 
         if "gemini_api_key" in new_config:
             self.translator.set_gemini_key(new_config["gemini_api_key"])
