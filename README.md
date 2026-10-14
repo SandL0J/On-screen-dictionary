@@ -42,44 +42,49 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
 - Video oynatıcınızın veya tarayıcınızın "Geri/İleri" gitmesini engelleyerek video akışını kesintiye uğratmaz.
 - Fare kelimeden uzaklaştığı an kart kendiliğinden kaybolur.
 
-### 2. ✂️ Dondurulmuş Kare Ekran Kırpıcı (`Tab + Space`)
+### 2. 🎬 Bağlam İçi Cümle Madenciliği (Sentence Mining)
+- Fare yan tuşuyla kelimeye bakıldığında kelimenin içinde geçtiği tüm altyazı repliği otomatik algılanır.
+- Çeviri HUD kartında `💬 Bağlam` alanı olarak sunulur.
+- Tek tıkla (⭐) favorilere eklendiğinde dizi/film cümlesi otomatik olarak kelime defterine ve SM-2 Flashcard tekrar kartlarına örnek cümle (`example_de`) olarak kaydedilir.
+
+### 3. ✂️ Dondurulmuş Kare Ekran Kırpıcı (`Tab + Space`)
 - Kopyalanamayan veya hızlı geçen video altyazılarında **`Tab + Space`** tuşlarına basın.
 - Ekran o karede dondurulur; altyazıyı farenizle çerçeve içine alıp bıraktığınız anda çeviri sonuç kartı (HUD) açılır.
 
-### 3. 🎨 Renk Kodlu Artikeller ve Gramer Ayrıştırıcı
+### 4. 🎨 Renk Kodlu Artikeller ve Gramer Ayrıştırıcı
 - Almanca isimlerin artikelleri renk kodlamasıyla sunulur:
   - 🔵 **der** (Maskulinum - Mavi)
   - 🔴 **die** (Femininum - Kırmızı)
   - 🟢 **das** (Neutrum - Yeşil)
 - Kelimenin çoğul hali (`die Häuser`, `die Entscheidungen`), kelime türü (`Nomen`, `Verb`, `Adjektiv`) ve dilbilgisi son ek kuralları (`-ung`, `-heit`, `-keit`, `-ment` vb.) otomatik açıklanır.
 
-### 4. 🤖 Google Gemini AI Entegrasyonu (Düşük Tüketimli Flash Modelleri)
+### 5. 🤖 Google Gemini AI Entegrasyonu (Düşük Tüketimli Flash Modelleri)
 - Ayarlar menüsünden Google Gemini API anahtarınızı bağlayabilirsiniz.
 - **Hafif ve Ekonomik:** Google AI Studio'nun yüksek performanslı ve düşük token tüketen güncel modelleriyle (varsayılan: `gemini-3.5-flash-lite`, kalite odaklı: `gemini-3.8-flash`) tüm metinleri ve cümleleri derin dilbilgisi analizleriyle Türkçeye çevirir.
 - Güncel modeller için [Google AI Studio Modelleri](https://ai.google.dev/gemini-api/docs/models) ve kota limitleri için [Gemini Hız Limitleri](https://ai.google.dev/gemini-api/docs/rate-limits) resmi belgelerini inceleyebilirsiniz.
 - **Canlı Test Butonu:** API anahtarınızın çalışıp çalışmadığını ayarlar menüsündeki `🔍 Test Et` butonuyla anında doğrulayabilirsiniz.
 
-### 5. 📋 Pano Takibi (İsteğe Bağlı & Gizlilik Odaklı)
+### 6. 📋 Pano Takibi (İsteğe Bağlı & Gizlilik Odaklı)
 - Gizliliğinizi korumak amacıyla otomatik pano okuma varsayılan olarak **kapalıdır**. Dilediğiniz zaman Ayarlar menüsünden etkinleştirebilirsiniz.
 - Etkinleştirildiğinde, internette veya PDF okurken herhangi bir Almanca metni seçip `Ctrl+C` yaptığınız an, arka plan dinleyicisi metni yakalar ve ekranınızda çevirisini gösterir.
 - Otomatik pano dinleme kapalı olsa dahi, klavyeden **`Alt + C`** kısayolu ile istediğiniz zaman seçili metni manuel olarak çevirebilirsiniz.
 
-### 6. 📚 Kişisel Kelime Defteri ve Flashcards
+### 7. 📚 Kişisel Kelime Defteri ve Flashcards
 - Beğendiğiniz veya öğrenmek istediğiniz kelimeleri tek tıkla (**⭐**) defterinize ekleyin.
 - Dahili Flashcard arayüzü ile kelimeleri pratik yapın.
 - Kelimelerinizi **Anki** uyumlu CSV formatında dışa aktarın.
 
-### 7. ⚡ Çevrimdışı Sözlük ve SQLite Önbellek
+### 8. ⚡ Çevrimdışı Sözlük ve SQLite Önbellek
 - **75 temel Almanca kelime** ve **60 çoğul kuralı eşlemesi** yerleşik olarak çevrimdışı sunulur.
 - Daha önce aranan tüm kelimeler ve çeviriler yerel SQLite önbelleğinde saklanır.
 - İnternet bağlantınız olmasa dahi önbellekteki kelimelere anında yanıt verir ve gereksiz kota tüketmez.
 
-### 8. 🧩 Sözlük Biçimi (Lemma) ve Ayrılabilir Fiil Tespiti
+### 9. 🧩 Sözlük Biçimi (Lemma) ve Ayrılabilir Fiil Tespiti
 - Çekimli fiillerin (`ging`, `flog`, `sprach`) sözlük biçimini (mastar / Lemma: `gehen`, `fliegen`, `sprechen`) ve zaman kipini (`Präteritum`, `Partizip II`) anında tespit eder.
 - Cümle içindeki ayrılabilir fiilleri (`Er fängt morgen an.` → `anfangen`) bağlamdan yakalar ve hem çekimli fiil hem de cümlenin sonundaki ön ek (`an`) üzerinde sözlük anlamını sunar.
 - Kelime defterine eklerken sözlük biçimini (`gehen`, `anfangen`) yüzey formu (`ging`, `fängt`) ile birlikte kaydeder.
 
-### 9. 🔍 Akıllı Cümle Dilbilgisi Çözümlemesi (Grammar Panel)
+### 10. 🔍 Akıllı Cümle Dilbilgisi Çözümlemesi (Grammar Panel)
 - Sonuç kartındaki (HUD) **`🔍 Dilbilgisi`** butonuna tıklayarak cümlenin tüm dilbilgisi yapısını detaylı inceleyebilirsiniz.
 - Gemini AI desteğiyle:
   - Cümlenin Türkçe çevirisi,
@@ -88,6 +93,20 @@ Almanca dizi, film, YouTube videosu izlerken veya internette makale okurken bilm
   - İsimlerin ve zamirlerin cümledeki halleri (**Nominativ**, **Akkusativ**, **Dativ**, **Genitiv**) ve rolleri (Özne, Nesne),
   - Cümleye özel Almanca öğrenme ipuçları şık renkli rozetlerle sunulur.
 - Çevrimdışı veya API anahtarsız kullanımda yerel kural tabanlı gramer ipuçları devreye girer.
+
+### 11. 🇩🇪 Almanca Öğrenenlere Özel "Hap" Dilbilgisi Asistanı (Pedagojik İpuçları)
+Almanca öğrenirken en çok zorlanılan dilbilgisi kuralları için bağlamsal ve anlık hap bilgiler sunulur:
+- **🎯 Fiil İstemleri Rehberi (Rektion der Verben):**
+  - Fiilin hangi edatı ve hangi hali aldığını (`warten auf + Akk`, `sich interessieren für + Akk`, `teilnehmen an + Dat`) anında tespit eder.
+  - Cümle bağlamındaki edatla (kaynaşmış biçimler dahil: `am`, `im`, `zum`, `zur`) dinamik eşleşerek renkli hap rozet (`🎯 auf + Akkusativ`) olarak kartta gösterir.
+- **🔄 İki Yönlü Edat İpucu (Wechselpräpositionen — Akkusativ mi Dativ mi?):**
+  - Cümlede `an, auf, hinter, in, neben, über, unter, vor, zwischen` veya kaynaşmış biçimler (`ins`, `im`, `ans`, `am`, `aufs`) geçtiğinde:
+    - `ins Kino` / `auf den Tisch` → 🏃 **Akkusativ · Hareket / Yönelme (Wohin?)**
+    - `im Kino` / `auf dem Tisch` → 📍 **Dativ · Konum / Bulunma (Wo?)**
+  - Artikel belirsiz olduğunda fiilin türüne (durum fiilleri `liegen/stehen/sitzen` vs. hareket fiilleri `legen/stellen/setzen`) göre hali otomatik belirler.
+- **🧩 Kalıp ve Deyim Tespiti (Collocations & Redewendungen):**
+  - Birden fazla kelimeden oluşan, sözcük sözcük çevrildiğinde anlamını yitiren kalıpları (`es geht um`, `auf jeden Fall`, `zur Verfügung stehen`, `in Frage kommen`, `eine Entscheidung treffen` vb.) bağlamdan otomatik tanır.
+  - ⭐ Yıldız butonuna basıldığında kelime defterine tekil kelime yerine kalıbın kendisini ve deyim anlamını kaydeder.
 
 ---
 
@@ -186,7 +205,8 @@ On-screen-dictionary/
 │       ├── settings_window.py # Ayarlar ve Gemini API yönetim penceresi
 │       ├── snipper.py         # Ekran dondurmalı bölge kırpıcı
 │       └── wordbook_window.py # Kelime defteri ve flashcard arayüzü
-├── tests/                     # 238 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
+├── tests/                     # 269 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
+│   └── test_sentence_mining.py # Bağlam içi cümle madenciliği ve SM-2 defter entegrasyon testleri
 ├── packaging/                 # Windows Installer, PyInstaller spec ve ikon varlıkları
 ├── .github/workflows/         # GitHub Actions CI/CD test matrisi ve release iş akışları
 ├── main.py                    # Uygulama ana giriş noktası
