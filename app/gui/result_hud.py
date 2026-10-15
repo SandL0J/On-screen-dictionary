@@ -190,7 +190,12 @@ class ResultHUD:
         self.footer_frame.pack(fill="x", pady=(10, 0))
 
         # Deftere Kaydet Butonu
-        is_saved = self.db.is_word_saved(self.data.get("german", "")) if self.db else False
+        colloc = self.data.get("collocation")
+        if colloc and colloc.get("phrase"):
+            init_lookup = colloc["phrase"].strip()
+        else:
+            init_lookup = (self.data.get("lemma") or self.data.get("german", "")).strip()
+        is_saved = self.db.is_word_saved(init_lookup) if self.db else False
         self.save_btn_text = "✓ Kayıtlı" if is_saved else "⭐ Deftere Ekle"
         self.save_btn_bg = "#065f46" if is_saved else "#6366f1"
 
@@ -347,9 +352,26 @@ class ResultHUD:
                 )
                 plural_label.pack(anchor="w", pady=(2, 4))
 
+            # Fiil Triad Şeridi (Mastar • Prät • Perf)
+            verb_info = self.data.get("verb_info")
+            if verb_info:
+                triad_display = verb_info.get("triad_display") or f"📌 Mastar: {verb_info.get('infinitive', '')} • Prät: {verb_info.get('praeteritum', '')} • Perf: {verb_info.get('perfekt', '')}"
+                triad_frame = tk.Frame(self.content_frame, bg="#1e1e24", padx=8, pady=4)
+                triad_frame.pack(fill="x", anchor="w", pady=(2, 4))
+                triad_label = tk.Label(
+                    triad_frame,
+                    text=triad_display,
+                    font=("Segoe UI", 9, "bold"),
+                    fg="#38bdf8",
+                    bg="#1e1e24",
+                    wraplength=340,
+                    justify="left"
+                )
+                triad_label.pack(anchor="w")
+
             # Sözlük Biçimi ve Ayrılabilir Fiil İpucu (Lemma Hint)
             lemma_hint = (self.data.get("lemma_hint") or "").strip()
-            if lemma_hint:
+            if lemma_hint and not verb_info:
                 lemma_label = tk.Label(
                     self.content_frame,
                     text=lemma_hint,
@@ -374,6 +396,64 @@ class ResultHUD:
                 justify="left"
             )
             tr_label.pack(anchor="w", pady=(4, 4))
+
+            # Kalıp / Deyim (Collocation)
+            colloc = self.data.get("collocation")
+            if colloc and colloc.get("phrase"):
+                colloc_frame = tk.Frame(self.content_frame, bg="#1e1e24", padx=8, pady=4)
+                colloc_frame.pack(fill="x", anchor="w", pady=(2, 4))
+                tk.Label(
+                    colloc_frame,
+                    text=f"🧩 Kalıp / Deyim: {colloc['phrase']}",
+                    font=("Segoe UI", 9, "bold"),
+                    fg="#c084fc",
+                    bg="#1e1e24"
+                ).pack(anchor="w")
+                tk.Label(
+                    colloc_frame,
+                    text=f"→ {colloc.get('meaning_tr', '')}",
+                    font=("Segoe UI", 9),
+                    fg="#fafafa",
+                    bg="#1e1e24"
+                ).pack(anchor="w")
+
+            # Fiil İstemi (Rektion der Verben)
+            valency = self.data.get("valency")
+            if valency and valency.get("preposition"):
+                val_frame = tk.Frame(self.content_frame, bg="#1e293b", padx=6, pady=3)
+                val_frame.pack(fill="x", anchor="w", pady=(2, 3))
+                refl_text = "sich " if valency.get("reflexive") else ""
+                val_title = f"🎯 Fiil İstemi: {refl_text}{valency['verb']} + {valency['preposition']} + {valency['case']}"
+                tk.Label(
+                    val_frame,
+                    text=val_title,
+                    font=("Segoe UI", 8, "bold"),
+                    fg="#38bdf8",
+                    bg="#1e293b"
+                ).pack(anchor="w")
+                if valency.get("meaning_tr"):
+                    tk.Label(
+                        val_frame,
+                        text=f"({valency['meaning_tr']})",
+                        font=("Segoe UI", 8, "italic"),
+                        fg="#94a3b8",
+                        bg="#1e293b"
+                    ).pack(anchor="w")
+
+            # İki Yönlü Edat Rehberi (Wechselpräpositionen)
+            two_way = self.data.get("two_way_prep")
+            if two_way and two_way.get("badge"):
+                prep_frame = tk.Frame(self.content_frame, bg="#1e293b", padx=6, pady=3)
+                prep_frame.pack(fill="x", anchor="w", pady=(2, 3))
+                tk.Label(
+                    prep_frame,
+                    text=two_way.get("hint") or two_way["badge"],
+                    font=("Segoe UI", 8, "bold"),
+                    fg="#facc15",
+                    bg="#1e293b",
+                    wraplength=340,
+                    justify="left"
+                ).pack(anchor="w")
 
             # Bağlam İçi Cümle (Sentence Mining)
             context_sentence = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
@@ -472,6 +552,41 @@ class ResultHUD:
             )
             tr_lbl.pack(anchor="w", pady=(0, 6))
 
+            # Cümle İçi Kalıp / Deyim (Varsa)
+            colloc = self.data.get("collocation")
+            if colloc and colloc.get("phrase"):
+                colloc_frame = tk.Frame(self.content_frame, bg="#1e1e24", padx=8, pady=4)
+                colloc_frame.pack(fill="x", anchor="w", pady=(0, 4))
+                tk.Label(
+                    colloc_frame,
+                    text=f"🧩 Kalıp / Deyim: {colloc['phrase']}",
+                    font=("Segoe UI", 9, "bold"),
+                    fg="#c084fc",
+                    bg="#1e1e24"
+                ).pack(anchor="w")
+                tk.Label(
+                    colloc_frame,
+                    text=f"→ {colloc.get('meaning_tr', '')}",
+                    font=("Segoe UI", 9),
+                    fg="#fafafa",
+                    bg="#1e1e24"
+                ).pack(anchor="w")
+
+            # İki Yönlü Edat Rehberi (Wechselpräpositionen)
+            two_way = self.data.get("two_way_prep")
+            if two_way and two_way.get("badge"):
+                prep_frame = tk.Frame(self.content_frame, bg="#1e293b", padx=6, pady=3)
+                prep_frame.pack(fill="x", anchor="w", pady=(0, 4))
+                tk.Label(
+                    prep_frame,
+                    text=two_way.get("hint") or two_way["badge"],
+                    font=("Segoe UI", 8, "bold"),
+                    fg="#facc15",
+                    bg="#1e293b",
+                    wraplength=340,
+                    justify="left"
+                ).pack(anchor="w")
+
             # Bağlam Cümlesi (Varsa ve Almanca metinden farklıysa)
             context_sentence = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
             german_text = self.data.get("german", "").strip()
@@ -525,7 +640,11 @@ class ResultHUD:
             self.on_grammar_request = on_grammar_request
         self.data = data
         self._render_content()
-        save_lookup = (self.data.get("lemma") or self.data.get("german", "")).strip()
+        colloc = self.data.get("collocation")
+        if colloc and colloc.get("phrase"):
+            save_lookup = colloc["phrase"].strip()
+        else:
+            save_lookup = (self.data.get("lemma") or self.data.get("german", "")).strip()
         is_saved = self.db.is_word_saved(save_lookup) if self.db else False
         self.btn_save.configure(
             text="✓ Kayıtlı" if is_saved else "⭐ Deftere Ekle",
@@ -552,8 +671,16 @@ class ResultHUD:
             self.on_grammar_request(sentence, focus_word)
 
     def _toggle_save_word(self):
-        save_german = (self.data.get("lemma") or self.data.get("german", "")).strip()
-        turkish = self.data.get("turkish", "").strip()
+        colloc = self.data.get("collocation")
+        if colloc and colloc.get("phrase"):
+            save_german = colloc["phrase"].strip()
+            turkish = (colloc.get("meaning_tr") or self.data.get("turkish", "")).strip()
+            pos = "Kalıp / Deyim"
+        else:
+            save_german = (self.data.get("lemma") or self.data.get("german", "")).strip()
+            turkish = self.data.get("turkish", "").strip()
+            pos = self.data.get("pos", "").strip()
+
         if not save_german or not self.db:
             return
 
@@ -574,7 +701,18 @@ class ResultHUD:
             if self.on_save_callback:
                 self.on_save_callback(save_german, False)
         else:
-            note_text = f"Kelime ({surface})" if surface and surface.lower() != save_german.lower() else ""
+            verb_info = self.data.get("verb_info")
+            triad_note = ""
+            if verb_info:
+                triad_note = verb_info.get("triad") or f"Mastar: {verb_info.get('infinitive', '')} • Prät: {verb_info.get('praeteritum', '')} • Perf: {verb_info.get('perfekt', '')}"
+
+            note_parts = []
+            if surface and surface.lower() != save_german.lower():
+                note_parts.append(f"Kelime ({surface})")
+            if triad_note:
+                note_parts.append(triad_note)
+            note_text = " | ".join(note_parts)
+
             self.db.add_word(
                 german=save_german,
                 turkish=turkish,

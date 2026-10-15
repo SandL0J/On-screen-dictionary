@@ -97,11 +97,18 @@ class TestTranslationEngineGrammar(unittest.TestCase):
     """TranslationEngine.analyze_grammar testleri."""
 
     def setUp(self):
-        self.db = Database()
+        import tempfile
+        from pathlib import Path
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db = Database(Path(self.temp_dir.name) / "test.db")
         self.engine = TranslationEngine(db=self.db, gemini_api_key="")
 
     def tearDown(self):
         self.db.close()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def test_rule_based_fallback_when_gemini_not_configured(self):
         """Gemini yapılandırılmamışsa kural tabanlı analiz döner ve needs_gemini=True olur."""

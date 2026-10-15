@@ -210,6 +210,18 @@ class HoverTooltip:
             anchor="w",
         )
 
+        # Pedagojik Dilbilgisi İpucu (Fiil istemi, iki yönlü edat, kalıp/deyim)
+        self.lbl_pedagogy = tk.Label(
+            self.outer_frame,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            fg="#c084fc",
+            bg="#18181b",
+            wraplength=340,
+            justify="left",
+            anchor="w",
+        )
+
         # Alt Satır: Türkçe Anlamı
         self.lbl_turkish = tk.Label(
             self.outer_frame,
@@ -440,7 +452,11 @@ class HoverTooltip:
 
         # Hızlı Kaydet Yıldızı
         self.btn_star.pack(side="right", padx=(4, 2))
-        save_lookup = (word_data.get("lemma") or german_word).strip()
+        colloc = word_data.get("collocation")
+        if colloc and colloc.get("phrase"):
+            save_lookup = colloc["phrase"].strip()
+        else:
+            save_lookup = (word_data.get("lemma") or german_word).strip()
         if self.db and self.db.is_word_saved(save_lookup):
             self.btn_star.configure(text="★", fg="#eab308")
         else:
@@ -462,6 +478,16 @@ class HoverTooltip:
         else:
             self.lbl_lemma_hint.configure(text="")
             self.lbl_lemma_hint.pack_forget()
+
+        # Pedagojik Dilbilgisi İpuçları (Fiil istemi, iki yönlü edat, kalıp/deyim)
+        pedagogy_hints = word_data.get("pedagogy_hints", [])
+        if pedagogy_hints:
+            ped_text = "\n".join(pedagogy_hints[:2])
+            self.lbl_pedagogy.configure(text=ped_text)
+            self.lbl_pedagogy.pack(fill="x", anchor="w", pady=(1, 0))
+        else:
+            self.lbl_pedagogy.configure(text="")
+            self.lbl_pedagogy.pack_forget()
 
         # Akıllı Konumlandırma
         self.window.update_idletasks()
@@ -519,17 +545,23 @@ class HoverTooltip:
         if not self._current_data or not self.db:
             return
 
-        german = (
-            self._current_data.get("lemma") or
-            self._current_data.get("german") or
-            self._current_data.get("original") or ""
-        ).strip()
+        colloc = self._current_data.get("collocation")
+        if colloc and colloc.get("phrase"):
+            german = colloc["phrase"].strip()
+            turkish = (colloc.get("meaning_tr") or self._current_data.get("turkish") or "").strip()
+        else:
+            german = (
+                self._current_data.get("lemma") or
+                self._current_data.get("german") or
+                self._current_data.get("original") or ""
+            ).strip()
+            turkish = (
+                self._current_data.get("turkish") or
+                self._current_data.get("translation") or ""
+            ).strip()
+
         if not german:
             return
-        turkish = (
-            self._current_data.get("turkish") or
-            self._current_data.get("translation") or ""
-        ).strip()
         analysis = self._current_data.get("analysis", {})
         article = (self._current_data.get("article") or analysis.get("article") or "").strip()
         plural = (self._current_data.get("plural") or analysis.get("plural") or "").strip()
@@ -544,7 +576,20 @@ class HoverTooltip:
             self.db.delete_word_by_german(german)
             self.btn_star.configure(text="☆", fg="#71717a")
         else:
-            note_text = f"Hover OCR ({surface})" if surface and surface.lower() != german.lower() else "Hover OCR"
+            verb_info = self._current_data.get("verb_info")
+            triad_note = ""
+            if verb_info:
+                triad_note = verb_info.get("triad") or f"Mastar: {verb_info.get('infinitive', '')} • Prät: {verb_info.get('praeteritum', '')} • Perf: {verb_info.get('perfekt', '')}"
+
+            note_parts = []
+            if surface and surface.lower() != german.lower():
+                note_parts.append(f"Hover OCR ({surface})")
+            else:
+                note_parts.append("Hover OCR")
+            if triad_note:
+                note_parts.append(triad_note)
+            note_text = " | ".join(note_parts)
+
             self.db.add_word(
                 german=german,
                 turkish=turkish,

@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
     "show_translation_warnings": True,
     "lemma_lookup_enabled": True,
     "grammar_analysis_enabled": True,
+    "pedagogy_hints_enabled": True,
 }
 
 from app.paths import get_config_path

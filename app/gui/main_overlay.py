@@ -22,6 +22,7 @@ from app.security import check_sensitive_clipboard
 from app.worker_pool import WorkerThreadPool
 from app.german_analyzer import is_single_word
 from app.lemmatizer import resolve_lemma, format_lemma_hint
+from app.pedagogy import analyze_pedagogy
 
 
 class MainOverlay:
@@ -696,6 +697,18 @@ class MainOverlay:
                             res["lemma_form"] = lemma_res.form_label
                             res["separable_prefix"] = lemma_res.separable_prefix
                             res["lemma_hint"] = hint
+
+                    if bool(self.config.get("pedagogy_hints_enabled", True)):
+                        resolved_lemma = res.get("lemma") or (lemma_res.lemma if lemma_res else "")
+                        ped_res = analyze_pedagogy(cleaned_text, res.get("context_sentence", ""), resolved_lemma)
+                        if ped_res.get("collocation"):
+                            res["collocation"] = ped_res["collocation"]
+                        if ped_res.get("valency"):
+                            res["valency"] = ped_res["valency"]
+                        if ped_res.get("two_way_prep"):
+                            res["two_way_prep"] = ped_res["two_way_prep"]
+                        if ped_res.get("pedagogy_hints"):
+                            res["pedagogy_hints"] = ped_res["pedagogy_hints"]
 
                 def _ui_dispatch():
                     with self._lookup_lock:

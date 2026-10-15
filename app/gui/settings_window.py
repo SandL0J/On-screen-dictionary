@@ -332,6 +332,24 @@ class SettingsWindow:
         )
         cb_grammar.pack(anchor="w", pady=2)
 
+        # 2e. Hap Dilbilgisi İpuçları (Fiil İstemleri, İki Yönlü Edatlar, Deyimler)
+        self.var_pedagogy_hints = tk.BooleanVar(
+            master=self.window,
+            value=bool(self.config.get("pedagogy_hints_enabled", True))
+        )
+        cb_pedagogy = tk.Checkbutton(
+            main_frame,
+            text="🎯 Hap dilbilgisi ipuçları (Fiil istemleri, iki yönlü edatlar, kalıplar/deyimler)",
+            variable=self.var_pedagogy_hints,
+            font=("Segoe UI", 9),
+            fg="#fafafa",
+            bg="#18181b",
+            selectcolor="#27272a",
+            activebackground="#18181b",
+            activeforeground="#fafafa"
+        )
+        cb_pedagogy.pack(anchor="w", pady=2)
+
         # 3. Otomatik Kapanma Süresi
         duration_frame = tk.Frame(main_frame, bg="#18181b", pady=3)
         duration_frame.pack(fill="x")
@@ -993,6 +1011,8 @@ class SettingsWindow:
             self.config["lemma_lookup_enabled"] = bool(self.var_lemma_lookup.get())
         if hasattr(self, "var_grammar_analysis"):
             self.config["grammar_analysis_enabled"] = bool(self.var_grammar_analysis.get())
+        if hasattr(self, "var_pedagogy_hints"):
+            self.config["pedagogy_hints_enabled"] = bool(self.var_pedagogy_hints.get())
         self.config["auto_hide_seconds"] = self.var_duration.get()
         if hasattr(self, "var_history_limit"):
             try:
@@ -1177,6 +1197,8 @@ class SettingsWindow:
             self.var_lemma_lookup.set(DEFAULT_CONFIG.get("lemma_lookup_enabled", True))
         if hasattr(self, "var_grammar_analysis"):
             self.var_grammar_analysis.set(DEFAULT_CONFIG.get("grammar_analysis_enabled", True))
+        if hasattr(self, "var_pedagogy_hints"):
+            self.var_pedagogy_hints.set(DEFAULT_CONFIG.get("pedagogy_hints_enabled", True))
         self.var_duration.set(DEFAULT_CONFIG.get("auto_hide_seconds", 12))
         if hasattr(self, "var_history_limit"):
             self.var_history_limit.set(DEFAULT_CONFIG.get("history_limit", 100))

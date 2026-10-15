@@ -18,6 +18,7 @@ from PIL import Image
 
 from app.security import is_sensitive_clipboard_text
 from app.lemmatizer import resolve_lemma, format_lemma_hint
+from app.pedagogy import analyze_pedagogy
 
 try:
     user32 = ctypes.windll.user32
@@ -652,6 +653,20 @@ class HoverTracker:
                         result_data["context_sentence"] = sentence
                         if sentence and not result_data.get("example_de"):
                             result_data["example_de"] = sentence
+
+                        # Pedagojik Dilbilgisi Analizi (Fiil İstemleri, İki Yönlü Edatlar, Kalıp/Deyimler)
+                        if bool(getattr(self, "config", {}).get("pedagogy_hints_enabled", True)):
+                            resolved_lemma = result_data.get("lemma") or (lemma_res.lemma if lemma_res else "")
+                            pedagogy_res = analyze_pedagogy(cleaned_word, sentence, resolved_lemma)
+                            if pedagogy_res.get("collocation"):
+                                result_data["collocation"] = pedagogy_res["collocation"]
+                            if pedagogy_res.get("valency"):
+                                result_data["valency"] = pedagogy_res["valency"]
+                            if pedagogy_res.get("two_way_prep"):
+                                result_data["two_way_prep"] = pedagogy_res["two_way_prep"]
+                            if pedagogy_res.get("pedagogy_hints"):
+                                result_data["pedagogy_hints"] = pedagogy_res["pedagogy_hints"]
+
                         self.on_word_hover(result_data, cursor_x, cursor_y)
                     else:
                         self._trigger_not_found_feedback(cursor_x, cursor_y)

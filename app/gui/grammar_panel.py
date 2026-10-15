@@ -259,6 +259,21 @@ class GrammarPanel:
                 justify="left"
             ).pack(anchor="w", padx=10, pady=8)
 
+        # 1b. Pedagojik Dilbilgisi İpuçları (Fiil istemi, iki yönlü edat, kalıplar)
+        ped_hints = data.get("pedagogy_hints", [])
+        if ped_hints:
+            sec_ped = self._create_section("🎯 Özel Dilbilgisi İpuçları (İstem / Edat / Kalıp)")
+            for hint in ped_hints:
+                tk.Label(
+                    sec_ped,
+                    text=f"• {hint}",
+                    font=("Segoe UI", 9, "bold"),
+                    fg="#facc15",
+                    bg="#27272a",
+                    wraplength=440,
+                    justify="left"
+                ).pack(anchor="w", padx=10, pady=(2, 4))
+
         # 2. Cümle Yapısı ve Yan Cümleler (Clauses)
         clauses = data.get("clauses", [])
         if clauses:
