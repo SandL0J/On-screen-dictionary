@@ -4,6 +4,12 @@ Bu betik, farenizin yan tuşlarının Windows tarafından nasıl algılandığı
 ve imlecinizin altındaki kelimenin başarıyla okunup okunmadığını test eder.
 """
 import time
+import sys
+from pathlib import Path
+
+# Proje ana dizinini sys.path'e ekle
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import ctypes
 from ctypes import wintypes
 from app.hover_tracker import is_key_down, get_current_cursor_pos, capture_screen_rect_gdi, VK_XBUTTON1, VK_XBUTTON2, VK_MBUTTON

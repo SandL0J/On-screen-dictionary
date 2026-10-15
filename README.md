@@ -191,27 +191,35 @@ On-screen-dictionary/
 │   ├── german_analyzer.py     # Almanca artikel tahmincisi ve dilbilgisi kuralları
 │   ├── hotkey_manager.py      # Win32 düşük seviyeli global klavye dinleyicisi
 │   ├── hover_tracker.py       # Fare yan tuşları (Mouse 4/5) ve imleç takip motoru
+│   ├── lemmatizer.py          # Çekimli ve ayrılabilir fiil morfoloji/lemma çözümleyicisi
 │   ├── ocr_engine.py          # Windows Media OCR & kelime koordinat eşleştiricisi
 │   ├── paths.py               # Kullanıcı veri yolları (%APPDATA%) ve otomatik veri göçü
+│   ├── pedagogy.py            # Pedagojik dilbilgisi kuralları ve ipucu eşleyicisi
 │   ├── security.py            # Windows DPAPI şifreleme ve hassas veri/pano filtresi
 │   ├── startup_manager.py     # Windows başlangıç kayıt defteri yönetimi
 │   ├── translator.py          # Türkçe hedef dilli ana çeviri motoru
 │   ├── tray_manager.py        # Windows sistem tepsisi (System Tray) entegrasyonu
 │   ├── worker_pool.py         # Sınırlı iş parçacığı havuzu (DaemonThreadPoolExecutor)
+│   ├── data/
+│   │   └── irregular_verbs.py # 225 güçlü ve düzensiz fiil morfolojik veritabanı
 │   └── gui/
+│       ├── grammar_panel.py   # Cümle dilbilgisi çözümleme paneli (Grammar Panel)
 │       ├── hover_tooltip.py   # Fare üstü yarı saydam mini çeviri balonu
 │       ├── main_overlay.py    # Yüzen modern kontrol çubuğu
+│       ├── onboarding_wizard.py # İlk kurulum ve hoş geldin sihirbazı
 │       ├── result_hud.py      # Çeviri sonuç ve dilbilgisi kartı (HUD)
+│       ├── save_helper.py     # Kelime defteri ve favori kaydetme yardımcısı (DRY)
 │       ├── settings_window.py # Ayarlar ve Gemini API yönetim penceresi
 │       ├── snipper.py         # Ekran dondurmalı bölge kırpıcı
 │       └── wordbook_window.py # Kelime defteri ve flashcard arayüzü
-├── tests/                     # 269 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
+├── tests/                     # 315 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
 │   └── test_sentence_mining.py # Bağlam içi cümle madenciliği ve SM-2 defter entegrasyon testleri
+├── tools/                     # Donanım teşhis ve yardımcı betikler
+│   └── test_mouse_trigger.py  # Fare yan tuşları (Mouse 4/5) ve OCR donanım teşhis aracı
 ├── packaging/                 # Windows Installer, PyInstaller spec ve ikon varlıkları
 ├── .github/workflows/         # GitHub Actions CI/CD test matrisi ve release iş akışları
 ├── main.py                    # Uygulama ana giriş noktası
 ├── run_app.bat                # Hızlı Windows başlatıcı
-├── test_mouse_trigger.py      # Fare tuşu ve OCR teşhis aracı
 ├── requirements.txt           # Python bağımlılıkları
 ├── config.example.json        # Örnek yapılandırma şablonu
 ├── .gitignore                 # Git yoksayma kuralları
