@@ -199,6 +199,32 @@ class TestVerbConjugationEngine(unittest.TestCase):
         finally:
             root.destroy()
 
+    def test_toggle_save_word_from_result_helper(self):
+        """save_helper.toggle_save_word_from_result doğrudan çağrılarını ve toggle/silme döngüsünü doğrular."""
+        from app.gui.save_helper import toggle_save_word_from_result
+
+        # Boş / geçersiz girdi kontrolü
+        self.assertEqual(toggle_save_word_from_result(None, {}), (False, ""))
+        self.assertEqual(toggle_save_word_from_result(self.db, None), (False, ""))
+        self.assertEqual(toggle_save_word_from_result(self.db, {"german": ""}), (False, ""))
+
+        # Kalıp / Deyim kaydı
+        colloc_data = {
+            "collocation": {"phrase": "es geht um", "meaning_tr": "konu ... ile ilgili"},
+            "example_de": "Es geht um alles.",
+            "example_tr": "Her şey söz konusu."
+        }
+        is_saved, saved_term = toggle_save_word_from_result(self.db, colloc_data)
+        self.assertTrue(is_saved)
+        self.assertEqual(saved_term, "es geht um")
+        self.assertTrue(self.db.is_word_saved("es geht um"))
+
+        # İkinci çağrı: Toggle ile silme
+        is_saved_again, deleted_term = toggle_save_word_from_result(self.db, colloc_data)
+        self.assertFalse(is_saved_again)
+        self.assertEqual(deleted_term, "es geht um")
+        self.assertFalse(self.db.is_word_saved("es geht um"))
+
 
 if __name__ == "__main__":
     unittest.main()

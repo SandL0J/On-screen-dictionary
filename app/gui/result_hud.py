@@ -8,6 +8,7 @@ from tkinter import ttk, messagebox
 import threading
 from typing import Dict, Any, Optional, Callable
 from app.gui.hover_tooltip import get_monitor_work_area
+from app.gui.save_helper import toggle_save_word_from_result
 
 
 def _is_security_warning(data: Dict[str, Any]) -> bool:
@@ -671,63 +672,24 @@ class ResultHUD:
             self.on_grammar_request(sentence, focus_word)
 
     def _toggle_save_word(self):
-        colloc = self.data.get("collocation")
-        if colloc and colloc.get("phrase"):
-            save_german = colloc["phrase"].strip()
-            turkish = (colloc.get("meaning_tr") or self.data.get("turkish", "")).strip()
-            pos = "Kalıp / Deyim"
-        else:
-            save_german = (self.data.get("lemma") or self.data.get("german", "")).strip()
-            turkish = self.data.get("turkish", "").strip()
-            pos = self.data.get("pos", "").strip()
-
-        if not save_german or not self.db:
+        if not self.db:
+            return
+        is_saved, german = toggle_save_word_from_result(
+            db=self.db,
+            data=self.data,
+            source_label="Kelime",
+            always_include_label=False
+        )
+        if not german:
             return
 
-        article = self.data.get("article", "").strip()
-        plural = self.data.get("plural", "").strip()
-        pos = self.data.get("pos", "").strip()
-        ex_de = (self.data.get("context_sentence") or self.data.get("example_de") or "").strip()
-        ex_tr = self.data.get("example_tr", "").strip()
-        surface = (self.data.get("surface_form") or "").strip()
-        extra_kwargs = {}
-        if surface:
-            extra_kwargs["surface_form"] = surface
-
-        if self.db.is_word_saved(save_german):
-            # Kayıtlıysa sil (Toggle)
-            self.db.delete_word_by_german(save_german)
-            self.btn_save.configure(text="⭐ Deftere Ekle", bg="#6366f1")
-            if self.on_save_callback:
-                self.on_save_callback(save_german, False)
-        else:
-            verb_info = self.data.get("verb_info")
-            triad_note = ""
-            if verb_info:
-                triad_note = verb_info.get("triad") or f"Mastar: {verb_info.get('infinitive', '')} • Prät: {verb_info.get('praeteritum', '')} • Perf: {verb_info.get('perfekt', '')}"
-
-            note_parts = []
-            if surface and surface.lower() != save_german.lower():
-                note_parts.append(f"Kelime ({surface})")
-            if triad_note:
-                note_parts.append(triad_note)
-            note_text = " | ".join(note_parts)
-
-            self.db.add_word(
-                german=save_german,
-                turkish=turkish,
-                article=article,
-                plural=plural,
-                part_of_speech=pos,
-                example_de=ex_de,
-                example_tr=ex_tr,
-                notes=note_text,
-                status="learning",
-                **extra_kwargs
-            )
+        if is_saved:
             self.btn_save.configure(text="✓ Kayıtlı", bg="#065f46")
-            if self.on_save_callback:
-                self.on_save_callback(save_german, True)
+        else:
+            self.btn_save.configure(text="⭐ Deftere Ekle", bg="#6366f1")
+
+        if self.on_save_callback:
+            self.on_save_callback(german, is_saved)
 
     def _toggle_favorite(self):
         """⭐ (Kaydet / _toggle_favorite) Kelime defterine ekler veya çıkarır."""

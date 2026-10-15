@@ -92,7 +92,7 @@ class Database:
             self.history_limit = 100
 
     @contextmanager
-    def _get_connection(self):
+    def _get_connection(self, commit: bool = True):
         with getattr(self, "_lock", threading.RLock()):
             if getattr(self, "_is_closed", False):
                 raise sqlite3.OperationalError("Veritabanı kapatılmış durumda; yeni işlem yapılamaz.")
@@ -105,7 +105,8 @@ class Database:
             conn.execute("PRAGMA busy_timeout = 5000;")
             conn.execute("PRAGMA synchronous = NORMAL;")
             yield conn
-            conn.commit()
+            if commit:
+                conn.commit()
         finally:
             if conn is not None:
                 try:
@@ -239,7 +240,7 @@ class Database:
             return None
         clean_query = query.strip().lower()
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(commit=False) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT result_json FROM cache WHERE query_text = ?", (clean_query,))
                 row = cursor.fetchone()
@@ -320,7 +321,7 @@ class Database:
             raise
 
     def get_recent_history(self, limit: int = 30) -> List[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, query_text, result_json, looked_up_at
@@ -434,13 +435,13 @@ class Database:
         return count
 
     def is_word_saved(self, german: str) -> bool:
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
             return cursor.fetchone() is not None
 
     def get_word_by_german(self, german: str) -> Optional[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
             row = cursor.fetchone()
@@ -469,7 +470,7 @@ class Database:
             params.append(status_filter.strip())
         query += " ORDER BY id DESC"
 
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             rows = cursor.fetchall()
@@ -507,7 +508,7 @@ class Database:
         return len(words)
 
     def get_word_by_id(self, word_id: int) -> Optional[Dict[str, Any]]:
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM wordbook WHERE id = ?", (word_id,))
             row = cursor.fetchone()
@@ -582,7 +583,7 @@ class Database:
         """Tekrar zamani gelmis (next_review_date <= target_date VEYA next_review_date IS NULL) kelimeleri doner."""
         if not target_date:
             target_date = datetime.now().strftime("%Y-%m-%d")
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
             query = f"""
                 SELECT * FROM wordbook
@@ -616,7 +617,7 @@ class Database:
         if not target_date:
             target_date = datetime.now().strftime("%Y-%m-%d")
 
-        with self._get_connection() as conn:
+        with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
 
             # 1. total_words: tum kayitlar

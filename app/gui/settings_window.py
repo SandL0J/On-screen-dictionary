@@ -88,6 +88,69 @@ class SettingsWindow:
             self._ui_queue.put(fn)
 
     def _init_ui(self):
+        self._build_footer()
+
+        # Kaydırılabilir İçerik Alanı (Canvas + Scrollbar)
+        container = tk.Frame(self.window, bg="#18181b")
+        container.pack(side="top", fill="both", expand=True)
+
+        self.canvas = tk.Canvas(container, bg="#18181b", highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        scrollable_frame = tk.Frame(self.canvas, bg="#18181b", padx=16, pady=10)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        canvas_frame = self.canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def _on_canvas_configure(event):
+            self.canvas.itemconfig(canvas_frame, width=event.width)
+
+        self.canvas.bind("<Configure>", _on_canvas_configure)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        def _on_mousewheel(event):
+            try:
+                if self.window.winfo_exists() and hasattr(self, "canvas") and self.canvas.winfo_exists():
+                    self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            except Exception:
+                pass
+
+        def _bind_mousewheel(event):
+            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            try:
+                self.canvas.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+
+        container.bind("<Enter>", _bind_mousewheel)
+        container.bind("<Leave>", _unbind_mousewheel)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        main_frame = scrollable_frame
+
+        tk.Label(
+            main_frame,
+            text="⚙️ Uygulama Ayarları",
+            font=("Segoe UI", 13, "bold"),
+            fg="#fafafa",
+            bg="#18181b"
+        ).pack(anchor="w", pady=(0, 10))
+
+        # Modüler Bölüm Kurucuları
+        self._build_general_section(main_frame)
+        self._build_hover_section(main_frame)
+        self._build_hotkeys_and_ocr_section(main_frame)
+        self._build_gemini_api_section(main_frame)
+        self._build_wizard_section(main_frame)
+
+    def _build_footer(self):
         # Alt Sabit Eylem ve Durum Çubuğu (Footer Frame) - Daima ekranın altında görünür kalır
         footer_frame = tk.Frame(self.window, bg="#18181b", padx=16, pady=10)
         footer_frame.pack(side="bottom", fill="x")
@@ -160,60 +223,7 @@ class SettingsWindow:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Destroy>", self._on_destroy)
 
-        # Kaydırılabilir İçerik Alanı (Canvas + Scrollbar)
-        container = tk.Frame(self.window, bg="#18181b")
-        container.pack(side="top", fill="both", expand=True)
-
-        self.canvas = tk.Canvas(container, bg="#18181b", highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
-        scrollable_frame = tk.Frame(self.canvas, bg="#18181b", padx=16, pady=10)
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-
-        canvas_frame = self.canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-
-        def _on_canvas_configure(event):
-            self.canvas.itemconfig(canvas_frame, width=event.width)
-
-        self.canvas.bind("<Configure>", _on_canvas_configure)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-
-        def _on_mousewheel(event):
-            try:
-                if self.window.winfo_exists() and hasattr(self, "canvas") and self.canvas.winfo_exists():
-                    self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-            except Exception:
-                pass
-
-        def _bind_mousewheel(event):
-            self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        def _unbind_mousewheel(event):
-            try:
-                self.canvas.unbind_all("<MouseWheel>")
-            except Exception:
-                pass
-
-        container.bind("<Enter>", _bind_mousewheel)
-        container.bind("<Leave>", _unbind_mousewheel)
-
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-
-        main_frame = scrollable_frame
-
-        tk.Label(
-            main_frame,
-            text="⚙️ Uygulama Ayarları",
-            font=("Segoe UI", 13, "bold"),
-            fg="#fafafa",
-            bg="#18181b"
-        ).pack(anchor="w", pady=(0, 10))
-
-        # 1. Pano Dinleme
+    def _build_general_section(self, main_frame: tk.Frame):
         # 1. Pano Dinleme (Varsayılan: Kapalı)
         self.var_clipboard = tk.BooleanVar(master=self.window, value=self.config.get("clipboard_auto_lookup", False))
         cb_clip = tk.Checkbutton(
@@ -407,6 +417,7 @@ class SettingsWindow:
             bg="#18181b"
         ).pack(side="left")
 
+    def _build_hover_section(self, main_frame: tk.Frame):
         # 4. Canlı Fare Üzerine Gelme (Hover) Ayarları
         hover_section = tk.LabelFrame(
             main_frame,
@@ -507,6 +518,7 @@ class SettingsWindow:
             justify="left"
         ).pack(fill="x", pady=(2, 2))
 
+    def _build_hotkeys_and_ocr_section(self, main_frame: tk.Frame):
         # 5. Kısayol Tuşları (Global Hotkeys)
         hotkey_section = tk.LabelFrame(
             main_frame,
@@ -682,6 +694,7 @@ class SettingsWindow:
         )
         self.lbl_ocr_status.pack(side="left", padx=8)
 
+    def _build_gemini_api_section(self, main_frame: tk.Frame):
         # 6. Gemini API Anahtarı ve Bağlantı Kontrolü
         api_section = tk.LabelFrame(
             main_frame,
@@ -853,6 +866,7 @@ class SettingsWindow:
             justify="left"
         ).pack(fill="x", pady=(3, 2))
 
+    def _build_wizard_section(self, main_frame: tk.Frame):
         # Sihirbaz Butonu
         self.btn_wizard = tk.Button(
             main_frame,
@@ -1005,8 +1019,6 @@ class SettingsWindow:
             disable_sec = bool(self.var_disable_security.get())
             self.config["disable_security_filter"] = disable_sec
             self.config["hide_security_warnings"] = disable_sec
-            self.config["hide_translation_warnings"] = False
-            self.config["show_translation_warnings"] = True
         if hasattr(self, "var_lemma_lookup"):
             self.config["lemma_lookup_enabled"] = bool(self.var_lemma_lookup.get())
         if hasattr(self, "var_grammar_analysis"):

@@ -7,6 +7,7 @@ içeren kompakt, yarı saydam ve hafif mini kart.
 import threading
 import tkinter as tk
 from typing import Dict, Any, Optional, Callable
+from app.gui.save_helper import toggle_save_word_from_result
 
 GENDER_COLORS = {
     "der": "#3b82f6",  # Mavi (Eril)
@@ -545,60 +546,16 @@ class HoverTooltip:
         if not self._current_data or not self.db:
             return
 
-        colloc = self._current_data.get("collocation")
-        if colloc and colloc.get("phrase"):
-            german = colloc["phrase"].strip()
-            turkish = (colloc.get("meaning_tr") or self._current_data.get("turkish") or "").strip()
-        else:
-            german = (
-                self._current_data.get("lemma") or
-                self._current_data.get("german") or
-                self._current_data.get("original") or ""
-            ).strip()
-            turkish = (
-                self._current_data.get("turkish") or
-                self._current_data.get("translation") or ""
-            ).strip()
-
+        is_saved, german = toggle_save_word_from_result(
+            db=self.db,
+            data=self._current_data,
+            source_label="Hover OCR",
+            always_include_label=True
+        )
         if not german:
             return
-        analysis = self._current_data.get("analysis", {})
-        article = (self._current_data.get("article") or analysis.get("article") or "").strip()
-        plural = (self._current_data.get("plural") or analysis.get("plural") or "").strip()
-        example = (self._current_data.get("context_sentence") or self._current_data.get("example_de") or "").strip()
-        example_tr = (self._current_data.get("example_tr") or "").strip()
-        surface = (self._current_data.get("surface_form") or "").strip()
-        extra_kwargs = {}
-        if surface:
-            extra_kwargs["surface_form"] = surface
 
-        if self.db.is_word_saved(german):
-            self.db.delete_word_by_german(german)
-            self.btn_star.configure(text="☆", fg="#71717a")
-        else:
-            verb_info = self._current_data.get("verb_info")
-            triad_note = ""
-            if verb_info:
-                triad_note = verb_info.get("triad") or f"Mastar: {verb_info.get('infinitive', '')} • Prät: {verb_info.get('praeteritum', '')} • Perf: {verb_info.get('perfekt', '')}"
-
-            note_parts = []
-            if surface and surface.lower() != german.lower():
-                note_parts.append(f"Hover OCR ({surface})")
-            else:
-                note_parts.append("Hover OCR")
-            if triad_note:
-                note_parts.append(triad_note)
-            note_text = " | ".join(note_parts)
-
-            self.db.add_word(
-                german=german,
-                turkish=turkish,
-                article=article,
-                plural=plural,
-                example_de=example,
-                example_tr=example_tr,
-                notes=note_text,
-                status="learning",
-                **extra_kwargs
-            )
+        if is_saved:
             self.btn_star.configure(text="★", fg="#eab308")
+        else:
+            self.btn_star.configure(text="☆", fg="#71717a")

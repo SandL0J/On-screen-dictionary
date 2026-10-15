@@ -35,8 +35,6 @@ DEFAULT_CONFIG = {
     "ocr_engine_preference": "auto",
     "disable_security_filter": False,
     "hide_security_warnings": False,
-    "hide_translation_warnings": False,
-    "show_translation_warnings": True,
     "lemma_lookup_enabled": True,
     "grammar_analysis_enabled": True,
     "pedagogy_hints_enabled": True,

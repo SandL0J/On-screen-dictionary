@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import re
 from typing import Optional, List, Tuple, Set
 
-from app.data.irregular_verbs import REVERSE_IRREGULAR_INDEX, IRREGULAR_VERBS_DATA
+from app.data.irregular_verbs import REVERSE_IRREGULAR_INDEX, IRREGULAR_VERBS_DATA, EXTRA_STRONG_VERBS
 from app.german_analyzer import (
     SEPARABLE_PREFIXES,
     MODAL_VERBS,
@@ -52,7 +52,7 @@ KNOWN_REGULAR_VERBS: Set[str] = {
 }
 
 # Tüm bilinen temel mastarlar kümesi
-ALL_BASE_VERBS: Set[str] = set(IRREGULAR_VERBS_DATA.keys()) | KNOWN_REGULAR_VERBS
+ALL_BASE_VERBS: Set[str] = set(IRREGULAR_VERBS_DATA.keys()) | set(EXTRA_STRONG_VERBS.keys()) | KNOWN_REGULAR_VERBS
 for k, v in COMMON_VOCABULARY.items():
     if "fiil" in v.get("pos", "").lower():
         ALL_BASE_VERBS.add(k)
