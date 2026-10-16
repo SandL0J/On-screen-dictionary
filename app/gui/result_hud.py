@@ -760,6 +760,16 @@ class ResultHUD:
             self.auto_hide_id = None
 
     def _on_mouse_leave(self, event):
+        if not self.window or not self.window.winfo_exists():
+            return
+        x = self.window.winfo_pointerx()
+        y = self.window.winfo_pointery()
+        widget_under_pointer = self.window.winfo_containing(x, y)
+        if widget_under_pointer:
+            top = getattr(widget_under_pointer, "winfo_toplevel", lambda: None)()
+            if top == self.window:
+                return  # İmleç halen HUD penceresi içindeki bir bileşenin üzerinde
+
         self._is_mouse_over = False
         self._schedule_auto_hide()
 

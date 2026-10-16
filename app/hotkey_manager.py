@@ -212,11 +212,23 @@ def validate_hotkey_string(combo_str: str) -> Tuple[bool, str]:
     """
     Kısayol metnini doğrular.
     Geçerliyse (True, "") döner; hatalıysa (False, "hata açıklaması") döner.
+    F1-F24 gibi tek fonksiyon tuşlarına izin verir; tek başına harf/sayı/değiştirici
+    tuşların klavyeyi kilitlemesini engeller.
     """
     try:
         keys = parse_hotkey(combo_str)
         if not keys:
             return False, "En az bir tuş belirtilmelidir."
+
+        if len(keys) == 1:
+            k = next(iter(keys))
+            if k in ALL_MODIFIERS:
+                return False, "Yalnızca değiştirici tuş (Ctrl, Alt, Shift, Win) tek başına kısayol olamaz."
+            # F1-F24 tuşları (0x70 - 0x87) ve PrintScreen tek başına kısayol olabilir
+            is_standalone_ok = (0x70 <= k <= 0x87) or (k == VK_SNAPSHOT) or (k in (VK_PAUSE if 'VK_PAUSE' in globals() else 0x13, VK_INSERT))
+            if not is_standalone_ok and (0x41 <= k <= 0x5A or 0x30 <= k <= 0x39 or k in (VK_SPACE, VK_RETURN, VK_BACK)):
+                return False, "Harf, rakam veya boşluk tuşları tek başına kısayol olamaz (en az bir değiştirici tuş veya kombinasyon gereklidir)."
+
         return True, ""
     except ValueError as e:
         return False, str(e)

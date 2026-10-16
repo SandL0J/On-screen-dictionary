@@ -20,6 +20,13 @@ from app.paths import get_db_path, CODE_DIR
 DB_PATH = get_db_path()
 
 
+def _py_lower(s: Any) -> str:
+    """Unicode uyumlu küçük harf dönüştürücü (Almanca Ä,Ö,Ü ve Türkçe İ,I,Ş,Ğ,Ç karakterlerini tam destekler)."""
+    if not isinstance(s, str):
+        return ""
+    return s.replace("İ", "i").replace("I", "ı").lower()
+
+
 def calculate_sm2(quality: int, repetitions: int, interval_days: int, ease_factor: float,
                   today: Optional[Union[str, date, datetime]] = None) -> Tuple[int, int, float, str]:
     """
@@ -104,6 +111,7 @@ class Database:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA busy_timeout = 5000;")
             conn.execute("PRAGMA synchronous = NORMAL;")
+            conn.create_function("PY_LOWER", 1, _py_lower)
             yield conn
             if commit:
                 conn.commit()
@@ -234,21 +242,66 @@ class Database:
             except Exception:
                 pass
 
+        # Eski sürümlerden kalan hatalı homograf önbellek kayıtlarını temizle
+        try:
+            with self._get_connection() as conn:
+                conn.cursor().execute("DELETE FROM cache WHERE query_text IN ('leben', 'essen', 'treffen', 'schreiben', 'lesen', 'wissen') AND result_json LIKE '%\"article\": \"das\"%'")
+                conn.commit()
+        except Exception:
+            pass
+
     # --- ÖNBELLEK METOTLARI ---
     def get_cache(self, query: str) -> Optional[Dict[str, Any]]:
         if self.is_closed:
             return None
-        clean_query = query.strip().lower()
+        clean_query = query.strip()
+        if not clean_query:
+            return None
         try:
             with self._get_connection(commit=False) as conn:
                 cursor = conn.cursor()
+                # 1. Tam eşleşme (Exact match)
                 cursor.execute("SELECT result_json FROM cache WHERE query_text = ?", (clean_query,))
                 row = cursor.fetchone()
                 if row:
                     try:
-                        return json.loads(row["result_json"])
+                        res = json.loads(row["result_json"])
+                        # Noun (capitalized) vs Verb (lowercase) homograf ayrımı
+                        homograph_words = {"leben", "essen", "treffen", "schreiben", "lesen", "wissen"}
+                        if clean_query[0].islower() and clean_query.lower() in homograph_words:
+                            if res.get("article") or str(res.get("pos", "")).startswith("İsim"):
+                                return None
+                        if clean_query[0].isupper() and clean_query.lower() in homograph_words:
+                            if not res.get("article") and str(res.get("pos", "")).startswith("Fiil"):
+                                return None
+                        return res
                     except Exception:
                         return None
+
+                # 2. Büyük/küçük harf duyarsız eşleşme (Case-insensitive fallback)
+                cursor.execute("SELECT query_text, result_json FROM cache WHERE PY_LOWER(query_text) = PY_LOWER(?)", (clean_query,))
+                rows = cursor.fetchall()
+                if rows:
+                    homograph_words = {"leben", "essen", "treffen", "schreiben", "lesen", "wissen"}
+                    clean_lower = clean_query.lower()
+                    for r in rows:
+                        q_text = r["query_text"]
+                        if clean_lower in homograph_words:
+                            # Noun (capitalized) vs Verb (lowercase) homograf ayrımı
+                            if clean_query[0].isupper() and not q_text[0].isupper():
+                                continue
+                            if clean_query[0].islower() and not q_text[0].islower():
+                                continue
+                        try:
+                            parsed_res = json.loads(r["result_json"])
+                            if clean_lower in homograph_words:
+                                if clean_query[0].islower() and (parsed_res.get("article") or str(parsed_res.get("pos", "")).startswith("İsim")):
+                                    continue
+                                if clean_query[0].isupper() and not parsed_res.get("article") and str(parsed_res.get("pos", "")).startswith("Fiil"):
+                                    continue
+                            return parsed_res
+                        except Exception:
+                            continue
         except sqlite3.OperationalError:
             if self.is_closed:
                 return None
@@ -259,7 +312,9 @@ class Database:
         if self.is_closed:
             print("[Ekran Sözlüğü UYARI] Kapalı veritabanına önbellek yazma denemesi reddedildi.")
             return False
-        clean_query = query.strip().lower()
+        clean_query = query.strip()
+        if not clean_query:
+            return False
         json_data = json.dumps(data, ensure_ascii=False)
         try:
             with self._get_connection() as conn:
@@ -372,17 +427,24 @@ class Database:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                # Aynı kelime var mı kontrol et
-                cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (clean_german,))
+                # Aynı kelime var mı kontrol et (Unicode uyumlu PY_LOWER ile)
+                cursor.execute("SELECT id FROM wordbook WHERE PY_LOWER(german) = PY_LOWER(?)", (clean_german,))
                 existing = cursor.fetchone()
                 if existing:
                     # Güncelle: Var olan kelimenin SM-2 alanları ve öğrenme geçmişi korunur!
+                    # Boş gelen alanlar mevcut dolu verilerin üstüne yazılmaz (COALESCE/NULLIF).
                     cursor.execute("""
                         UPDATE wordbook SET
-                            article = ?, plural = ?, turkish = ?, part_of_speech = ?,
-                            example_de = ?, example_tr = ?, notes = ?
+                            article = COALESCE(NULLIF(?, ''), article),
+                            plural = COALESCE(NULLIF(?, ''), plural),
+                            turkish = COALESCE(NULLIF(?, ''), turkish),
+                            part_of_speech = COALESCE(NULLIF(?, ''), part_of_speech),
+                            example_de = COALESCE(NULLIF(?, ''), example_de),
+                            example_tr = COALESCE(NULLIF(?, ''), example_tr),
+                            notes = COALESCE(NULLIF(?, ''), notes)
                         WHERE id = ?
-                    """, (article, plural, turkish, part_of_speech, example_de, example_tr, clean_notes, existing["id"]))
+                    """, (article.strip(), plural.strip(), turkish.strip(), part_of_speech.strip(),
+                          example_de.strip(), example_tr.strip(), clean_notes, existing["id"]))
                     conn.commit()
                     return existing["id"]
                 else:
@@ -437,20 +499,20 @@ class Database:
     def is_word_saved(self, german: str) -> bool:
         with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT id FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
+            cursor.execute("SELECT id FROM wordbook WHERE PY_LOWER(german) = PY_LOWER(?)", (german.strip(),))
             return cursor.fetchone() is not None
 
     def get_word_by_german(self, german: str) -> Optional[Dict[str, Any]]:
         with self._get_connection(commit=False) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
+            cursor.execute("SELECT * FROM wordbook WHERE PY_LOWER(german) = PY_LOWER(?)", (german.strip(),))
             row = cursor.fetchone()
             return dict(row) if row else None
 
     def delete_word_by_german(self, german: str) -> bool:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM wordbook WHERE LOWER(german) = LOWER(?)", (german.strip(),))
+            cursor.execute("DELETE FROM wordbook WHERE PY_LOWER(german) = PY_LOWER(?)", (german.strip(),))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -459,12 +521,15 @@ class Database:
         query = "SELECT * FROM wordbook WHERE 1=1"
         params = []
         if search:
-            query += " AND (LOWER(german) LIKE ? OR LOWER(turkish) LIKE ?)"
-            term = f"%{search.lower().strip()}%"
+            query += " AND (PY_LOWER(german) LIKE ? OR PY_LOWER(turkish) LIKE ?)"
+            term = f"%{_py_lower(search.strip())}%"
             params.extend([term, term])
         if article_filter:
-            query += " AND LOWER(article) = LOWER(?)"
-            params.append(article_filter.strip())
+            if article_filter.strip().lower() == "artikelsiz":
+                query += " AND (article IS NULL OR article = '')"
+            else:
+                query += " AND PY_LOWER(article) = PY_LOWER(?)"
+                params.append(article_filter.strip())
         if status_filter:
             query += " AND status = ?"
             params.append(status_filter.strip())
@@ -504,8 +569,12 @@ class Database:
                     back += f"<br><i>Örnek:</i> {w['example_de']}"
                     if w['example_tr']:
                         back += f" ({w['example_tr']})"
-                writer.writerow([front, back, w['part_of_speech'], w['status']])
+                if w.get('notes'):
+                    back += f"<br><i>Not:</i> {w['notes']}"
+                writer.writerow([front, back, w['part_of_speech'], w['status'], w.get('notes', '')])
         return len(words)
+
+    export_anki_csv = export_to_anki_csv
 
     def get_word_by_id(self, word_id: int) -> Optional[Dict[str, Any]]:
         with self._get_connection(commit=False) as conn:

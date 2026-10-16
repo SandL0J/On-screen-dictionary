@@ -72,12 +72,16 @@ class TranslationEngine:
                 if is_word:
                     v_info = get_verb_conjugation_info(clean)
                     if v_info:
-                        cached["verb_info"] = v_info
-                        cached["pos"] = "Fiil (Verb)"
-                        cached["article"] = ""
-                        if v_info.get("is_inflected"):
-                            cached["surface_form"] = clean
-                            cached["lemma"] = v_info["infinitive"]
+                        is_noun_with_article = bool(cached.get("article") and (clean[0].isupper() or clean.lower().startswith(("der ", "die ", "das "))))
+                        if not is_noun_with_article:
+                            cached["verb_info"] = v_info
+                            cached["pos"] = "Fiil (Verb)"
+                            cached["article"] = ""
+                            if v_info.get("is_inflected"):
+                                cached["surface_form"] = clean
+                                cached["lemma"] = v_info["infinitive"]
+                        else:
+                            cached["verb_info"] = v_info
                 hist_ok = self.db.add_history(clean, cached)
                 if hist_ok is False:
                     print("[Ekran Sözlüğü UYARI] Arama geçmişi veritabanına kaydedilemedi (veritabanı kapalı veya erişilemez).")
@@ -98,12 +102,16 @@ class TranslationEngine:
                             if is_word:
                                 v_info = get_verb_conjugation_info(clean)
                                 if v_info:
-                                    gemini_res["verb_info"] = v_info
-                                    gemini_res["pos"] = "Fiil (Verb)"
-                                    gemini_res["article"] = ""
-                                    if v_info.get("is_inflected"):
-                                        gemini_res["surface_form"] = clean
-                                        gemini_res["lemma"] = v_info["infinitive"]
+                                    is_noun_with_article = bool(gemini_res.get("article") and (clean[0].isupper() or clean.lower().startswith(("der ", "die ", "das "))))
+                                    if not is_noun_with_article:
+                                        gemini_res["verb_info"] = v_info
+                                        gemini_res["pos"] = "Fiil (Verb)"
+                                        gemini_res["article"] = ""
+                                        if v_info.get("is_inflected"):
+                                            gemini_res["surface_form"] = clean
+                                            gemini_res["lemma"] = v_info["infinitive"]
+                                    else:
+                                        gemini_res["verb_info"] = v_info
                             cache_ok = self.db.set_cache(clean, gemini_res)
                             hist_ok = self.db.add_history(clean, gemini_res)
                             if cache_ok is False or hist_ok is False:
@@ -117,13 +125,27 @@ class TranslationEngine:
 
         # 3. Tek kelimeler için kontrol
         if is_word:
+            art, base = extract_base_word(clean)
+            is_capitalized_candidate = bool(art or (base and base[0].isupper()))
+
+            # 3a. Çevrimdışı Almanca Sözlük (0ms)
+            offline_de = get_offline_analysis(clean)
+
+            # Büyük harfli isim veya artikelli kelimeler için kontrol (örn: 'das Essen', 'Essen', 'das Leben', 'Leben')
+            # Bilinen bir isim ise fiil çekimi bunu ezmemelidir!
+            if is_capitalized_candidate and offline_de and offline_de.get("article"):
+                offline_de["direction"] = "de_to_tr"
+                offline_de["translation"] = offline_de.get("turkish", "")
+                cache_ok = self.db.set_cache(clean, offline_de)
+                hist_ok = self.db.add_history(clean, offline_de)
+                offline_de["db_saved"] = not (cache_ok is False or hist_ok is False)
+                return offline_de
+
             verb_info = get_verb_conjugation_info(clean)
             if verb_info:
                 infinitive = verb_info["infinitive"]
                 is_inflected = verb_info.get("is_inflected", False)
 
-                # 3a. Çevrimdışı Almanca Sözlük (0ms)
-                offline_de = get_offline_analysis(clean)
                 if not offline_de and is_inflected:
                     # Çekimli form sözlükte doğrudan yoksa kök mastarını ara (örn: 'ging' -> 'gehen')
                     offline_de = get_offline_analysis(infinitive)
@@ -134,25 +156,25 @@ class TranslationEngine:
                         offline_de["lemma_hint"] = f"🔁 {clean} → {infinitive} · {verb_info.get('form', 'Çekimli Fiil')}"
 
                 if offline_de:
-                    offline_de["verb_info"] = verb_info
-                    offline_de["pos"] = "Fiil (Verb)"
-                    offline_de["article"] = ""
+                    if not (is_capitalized_candidate and offline_de.get("article")):
+                        offline_de["verb_info"] = verb_info
+                        offline_de["pos"] = "Fiil (Verb)"
+                        offline_de["article"] = ""
+                    else:
+                        offline_de["verb_info"] = verb_info
                     offline_de["direction"] = "de_to_tr"
                     offline_de["translation"] = offline_de.get("turkish", "")
                     cache_ok = self.db.set_cache(clean, offline_de)
                     hist_ok = self.db.add_history(clean, offline_de)
-                    if cache_ok is False or hist_ok is False:
-                        print("[Ekran Sözlüğü UYARI] Çevrimdışı sözlük sonucu veritabanına kaydedilemedi (veritabanı kapalı veya erişilemez).")
-                        offline_de["db_saved"] = False
-                    else:
-                        offline_de["db_saved"] = True
+                    offline_de["db_saved"] = not (cache_ok is False or hist_ok is False)
                     return offline_de
 
                 # 3b. Çevrimiçi Detaylı Kelime Çevirisi (Wiktionary + Google Translate)
                 result = self._lookup_word(clean, deadline=deadline)
                 result["verb_info"] = verb_info
-                result["pos"] = "Fiil (Verb)"
-                result["article"] = ""
+                if not (is_capitalized_candidate and result.get("article")):
+                    result["pos"] = "Fiil (Verb)"
+                    result["article"] = ""
                 if is_inflected:
                     result["lemma"] = infinitive
                     result["surface_form"] = clean
@@ -160,7 +182,6 @@ class TranslationEngine:
                         result["lemma_hint"] = f"🔁 {clean} → {infinitive} · {verb_info.get('form', 'Çekimli Fiil')}"
             else:
                 # 3a. Çevrimdışı Almanca Sözlük (0ms)
-                offline_de = get_offline_analysis(clean)
                 if offline_de:
                     offline_de["direction"] = "de_to_tr"
                     offline_de["translation"] = offline_de["turkish"]
@@ -596,6 +617,11 @@ class TranslationEngine:
             cached = self.db.get_cache(cache_key)
             if cached and isinstance(cached, dict) and cached.get("source") == "gemini_grammar":
                 cached_copy = dict(cached)
+                if "pedagogy_hints" not in cached_copy:
+                    from app.pedagogy import analyze_pedagogy
+                    ped_res = analyze_pedagogy(focus_word or "", clean_sentence)
+                    if ped_res.get("pedagogy_hints"):
+                        cached_copy["pedagogy_hints"] = ped_res["pedagogy_hints"]
                 cached_copy["from_cache"] = True
                 return cached_copy
         except Exception as e:
@@ -607,15 +633,15 @@ class TranslationEngine:
             try:
                 gemini_res = self.gemini_service.analyze_sentence_grammar(clean_sentence, focus_word=focus_word, deadline=deadline)
                 if gemini_res and isinstance(gemini_res, dict) and gemini_res.get("translation_tr"):
-                    # Başarılı sonucu önbelleğe yaz
-                    try:
-                        self.db.set_cache(cache_key, gemini_res)
-                    except Exception as e:
-                        print(f"[Grammar Cache Set Hatası]: {e}")
                     from app.pedagogy import analyze_pedagogy
                     ped_res = analyze_pedagogy(focus_word or "", clean_sentence)
                     if ped_res.get("pedagogy_hints"):
                         gemini_res["pedagogy_hints"] = ped_res["pedagogy_hints"]
+                    # Başarılı sonucu (pedagoji ipuçları dahil) önbelleğe yaz
+                    try:
+                        self.db.set_cache(cache_key, gemini_res)
+                    except Exception as e:
+                        print(f"[Grammar Cache Set Hatası]: {e}")
                     return dict(gemini_res)
             except Exception as e:
                 print(f"[Gemini Grammar Çağrı Hatası]: {e}")

@@ -188,17 +188,18 @@ class MainOverlay:
             self.hotkey_mgr.register("clipboard", "alt+c", lambda: self.post_to_ui(self._lookup_from_clipboard))
 
     def _trigger_ocr_hotkey(self):
-        """Kısayol basıldığında pencereyi görünür yapıp öne getirir ve OCR kırpıcıyı açar."""
-        if not self._is_bar_visible:
-            self.root.deiconify()
-            self.root.attributes("-topmost", self.config.get("always_on_top", True))
-            self.root.lift()
-            self._is_bar_visible = True
-        else:
-            self.root.deiconify()
-            self.root.attributes("-topmost", self.config.get("always_on_top", True))
-            self.root.lift()
+        """Kısayol basıldığında OCR kırpıcıyı açar (ekran görüntüsüne uygulamanın kendi çubuğunu dondurmaz)."""
+        was_hidden = not self._is_bar_visible
         self._start_ocr_snip()
+        if was_hidden:
+            self._is_bar_visible = True
+            if hasattr(self, "root") and self.root and self.root.winfo_exists():
+                try:
+                    self.root.deiconify()
+                    self.root.attributes("-topmost", self.config.get("always_on_top", True))
+                    self.root.lift()
+                except Exception:
+                    pass
 
     def _init_ui(self):
         self.bg_color = "#18181b"
@@ -466,8 +467,11 @@ class MainOverlay:
             return None
 
         if threading.current_thread() is not threading.main_thread():
-            # Arka plan iş parçacığı: Yalnızca kuyruğa ekle, Tk metodlarına ASLA dokunma
-            self.post_to_ui(func, *args)
+            # Arka plan iş parçacığı: Gecikmeyi koruyarak UI iş parçacığında zamanla
+            if ms > 0:
+                self.post_to_ui(lambda: self._safe_after(ms, func, *args))
+            else:
+                self.post_to_ui(func, *args)
             return None
 
         # Tk ana iş parçacığı
@@ -506,20 +510,29 @@ class MainOverlay:
         def _worker():
             if self._is_stopped:
                 return
-            # 1. Önce aktif pencerede kullanıcının seçili tuttuğu metni kopyalamayı dene
-            txt = copy_selected_text_windows(timeout_ms=100)
-            if not txt or not txt.strip():
-                # Kopyalama yeni bir metin getirmediyse mevcut panoya bak
-                txt = get_clipboard_text()
+            was_enabled = False
+            if self.clipboard_watcher and self.clipboard_watcher.is_enabled():
+                was_enabled = True
+                self.clipboard_watcher.set_enabled(False)
+            try:
+                # 1. Önce aktif pencerede kullanıcının seçili tuttuğu metni kopyalamayı dene
+                txt = copy_selected_text_windows(timeout_ms=100)
+                if not txt or not txt.strip():
+                    # Kopyalama yeni bir metin getirmediyse mevcut panoya bak
+                    txt = get_clipboard_text()
+                if txt and self.clipboard_watcher:
+                    self.clipboard_watcher._last_text = txt.strip()
+            finally:
+                if was_enabled and self.clipboard_watcher:
+                    import time
+                    time.sleep(0.05)
+                    self.clipboard_watcher.set_enabled(True)
 
             if self._is_stopped:
                 return
 
             if txt and txt.strip():
                 clean_text = txt.strip()
-                if self.clipboard_watcher:
-                    self.clipboard_watcher._last_text = clean_text
-
                 is_sec_off = bool(self.config.get("disable_security_filter", False) or self.config.get("hide_security_warnings", False))
                 if not is_sec_off:
                     # Hassas veri kontrolü (parola, API anahtarı, token, IBAN, kart vb.)
@@ -700,7 +713,8 @@ class MainOverlay:
 
                     if bool(self.config.get("pedagogy_hints_enabled", True)):
                         resolved_lemma = res.get("lemma") or (lemma_res.lemma if lemma_res else "")
-                        ped_res = analyze_pedagogy(cleaned_text, res.get("context_sentence", ""), resolved_lemma)
+                        ctx_sent = res.get("context_sentence") or (cleaned_text if res.get("is_sentence") else res.get("example_de", ""))
+                        ped_res = analyze_pedagogy(cleaned_text, ctx_sent, resolved_lemma)
                         if ped_res.get("collocation"):
                             res["collocation"] = ped_res["collocation"]
                         if ped_res.get("valency"):
@@ -780,6 +794,10 @@ class MainOverlay:
         self._worker_pool.submit(_worker)
 
     def _start_ocr_snip(self):
+        if hasattr(self, "hover_tooltip") and self.hover_tooltip:
+            self.hover_tooltip.hide()
+        if hasattr(self, "result_hud") and self.result_hud:
+            self.result_hud.hide()
         self.snipper.start_selection()
 
     def _toggle_clipboard(self):
@@ -834,7 +852,9 @@ class MainOverlay:
             self.config,
             self._apply_settings,
             ocr_engine=self.ocr,
-            on_open_wizard=self._open_onboarding_wizard
+            on_open_wizard=self._open_onboarding_wizard,
+            translator=self.translator,
+            db=self.db
         )
 
     def _open_onboarding_wizard(self):

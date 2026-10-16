@@ -83,7 +83,7 @@ class WordbookWindow:
         # Artikel Filtresi
         tk.Label(filter_bar, text="Artikel:", font=("Segoe UI", 9), fg="#a1a1aa", bg="#18181b").pack(side="left", padx=(0, 4))
         self.article_var = tk.StringVar(master=self.window, value="Hepsi")
-        art_cb = ttk.Combobox(filter_bar, textvariable=self.article_var, values=["Hepsi", "der", "die", "das"], width=8, state="readonly")
+        art_cb = ttk.Combobox(filter_bar, textvariable=self.article_var, values=["Hepsi", "der", "die", "das", "Artikelsiz"], width=10, state="readonly")
         art_cb.pack(side="left", padx=(0, 12))
         art_cb.bind("<<ComboboxSelected>>", lambda e: self._load_words())
 
@@ -407,7 +407,17 @@ class WordbookWindow:
             return
         w = self.flashcard_words[self.current_card_index]
         if not self.is_card_flipped:
-            self.fc_turkish_lbl.configure(text=w.get("turkish", ""), fg="#4ade80")
+            back_text = w.get("turkish", "")
+            details = []
+            if w.get("example_de"):
+                details.append(f"💬 {w['example_de']}")
+            if w.get("example_tr"):
+                details.append(f"   → {w['example_tr']}")
+            if w.get("notes"):
+                details.append(f"📝 {w['notes']}")
+            if details:
+                back_text += "\n\n" + "\n".join(details)
+            self.fc_turkish_lbl.configure(text=back_text, fg="#4ade80")
             self.is_card_flipped = True
             if hasattr(self, "rating_frame"):
                 self.rating_frame.pack(pady=(0, 15))

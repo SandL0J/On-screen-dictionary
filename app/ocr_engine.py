@@ -63,6 +63,7 @@ class OCREngine:
         self.tesseract_cmd = find_tesseract_path(tesseract_cmd)
         self._ps_script = self._create_ocr_ps_script()
         self._win_ocr_available: Optional[bool] = None
+        self._german_ocr_available: Optional[bool] = None
 
     def set_tesseract_cmd(self, path: str):
         """Tesseract yolunu günceller."""
@@ -343,7 +344,12 @@ if ($result) {
         if not image or image.width == 0 or image.height == 0:
             return []
 
-        use_tesseract_first = (self.preference == "tesseract" and bool(self.tesseract_cmd))
+        use_tesseract_first = (
+            bool(self.tesseract_cmd) and (
+                self.preference == "tesseract" or
+                (self.preference == "auto" and getattr(self, "_german_ocr_available", None) is False)
+            )
+        )
 
         if use_tesseract_first:
             boxes = self._boxes_with_tesseract(image)

@@ -212,7 +212,7 @@ On-screen-dictionary/
 │       ├── settings_window.py # Ayarlar ve Gemini API yönetim penceresi
 │       ├── snipper.py         # Ekran dondurmalı bölge kırpıcı
 │       └── wordbook_window.py # Kelime defteri ve flashcard arayüzü
-├── tests/                     # 315 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
+├── tests/                     # 332 birim, regresyon, dayanıklılık (stres) ve güvenlik testinden oluşan test paketi
 │   └── test_sentence_mining.py # Bağlam içi cümle madenciliği ve SM-2 defter entegrasyon testleri
 ├── tools/                     # Donanım teşhis ve yardımcı betikler
 │   └── test_mouse_trigger.py  # Fare yan tuşları (Mouse 4/5) ve OCR donanım teşhis aracı

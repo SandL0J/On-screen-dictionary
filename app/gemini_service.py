@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import json
 import time
+import re
 from typing import Tuple, Optional, Dict, Any
 
 from app.security import is_sensitive_clipboard_text, is_dpapi_protected
@@ -32,6 +33,7 @@ class GeminiService:
     def __init__(self, api_key: str = "", model: str = DEFAULT_MODEL):
         self.api_key = api_key.strip() if api_key else ""
         self.model = model.strip() if model else DEFAULT_MODEL
+        self._quota_exhausted_until = 0.0
 
     def set_api_key(self, api_key: str):
         self.api_key = api_key.strip() if api_key else ""
@@ -43,6 +45,50 @@ class GeminiService:
     def is_configured(self) -> bool:
         return bool(self.api_key and len(self.api_key) > 10 and not is_dpapi_protected(self.api_key) and not self.api_key.startswith("dpapi:"))
 
+    def _parse_retry_delay(self, err_msg: str = "", headers=None) -> float:
+        """HTTP 429 veya kota aşımında bekleme süresini (saniye) ayrıştırır."""
+        if headers:
+            try:
+                retry_header = headers.get("Retry-After")
+                if retry_header:
+                    val = float(retry_header)
+                    return max(5.0, min(val, 120.0))
+            except (ValueError, TypeError):
+                pass
+
+        if err_msg:
+            # 1. Google API JSON hata yanıtı kontrolü (RetryInfo / retryDelay)
+            try:
+                err_data = json.loads(err_msg)
+                if isinstance(err_data, dict):
+                    err_obj = err_data.get("error", err_data)
+                    for item in err_obj.get("details", []):
+                        if isinstance(item, dict):
+                            rd = item.get("retryDelay") or item.get("retry_delay")
+                            if rd and isinstance(rd, str):
+                                m_rd = re.search(r"(\d+(?:\.\d+)?)", rd)
+                                if m_rd:
+                                    val = float(m_rd.group(1))
+                                    return max(5.0, min(val, 120.0))
+            except Exception:
+                pass
+
+            # 2. Hata metninde saniye arama (örn: 'retry after 45s')
+            m = re.search(r"(\d+(?:\.\d+)?)\s*s", err_msg)
+            if m:
+                try:
+                    val = float(m.group(1))
+                    return max(5.0, min(val, 120.0))
+                except ValueError:
+                    pass
+
+        return 30.0
+
+    def _mark_quota_exhausted(self, delay: float = 30.0):
+        """Kota aşıldığında belirli bir süre boyunca API çağrılarını duraklatır."""
+        clamped = max(5.0, min(float(delay), 120.0))
+        self._quota_exhausted_until = time.monotonic() + clamped
+
     def _call_gemini_api(self, prompt: str, is_json: bool = False, max_tokens: int = 1000, deadline: Optional[float] = None) -> Optional[str]:
         """
         Gemini REST API'sine x-goog-api-key başlığı ile güvenli istek gönderir.
@@ -51,6 +97,9 @@ class GeminiService:
         Uçtan uca zaman bütçesi (deadline) aşımını engeller.
         """
         if not self.is_configured():
+            return None
+
+        if time.monotonic() < getattr(self, "_quota_exhausted_until", 0.0):
             return None
 
         preferred = self.model if self.model else DEFAULT_MODEL
@@ -107,8 +156,18 @@ class GeminiService:
                                     self.model = model_name
                                 return text_out
             except urllib.error.HTTPError as e:
-                # 404 (model kaldırılmış) veya 503 (servis yoğun) durumunda bir sonraki aktif modeli dene
-                if e.code in (404, 503, 500):
+                if e.code == 429:
+                    err_text = ""
+                    try:
+                        err_text = e.read().decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+                    delay = self._parse_retry_delay(err_text, getattr(e, "headers", None))
+                    self._mark_quota_exhausted(delay)
+                    print(f"Gemini API kota aşımı (HTTP 429), {delay:.1f}s boyunca API istekleri duraklatıldı.")
+                    break
+                elif e.code in (404, 503, 500):
+                    # 404 (model kaldırılmış) veya 503 (servis yoğun) durumunda bir sonraki aktif modeli dene
                     continue
                 else:
                     # Loglarda veya konsolda API anahtarı ASLA yazdırılmamalıdır

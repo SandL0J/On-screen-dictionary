@@ -12,6 +12,7 @@ import re
 from typing import Optional, List, Tuple, Set
 
 from app.data.irregular_verbs import REVERSE_IRREGULAR_INDEX, IRREGULAR_VERBS_DATA, EXTRA_STRONG_VERBS
+from app.data.verb_valency import VERB_VALENCY_DATA
 from app.german_analyzer import (
     SEPARABLE_PREFIXES,
     MODAL_VERBS,
@@ -20,8 +21,10 @@ from app.german_analyzer import (
 )
 
 # Ayrılmayan Önekler (Inseparable Prefixes - Asla ayrılamazlar)
+# Not: 'ge-' buraya dahil edilmez; aksi halde Partizip II ('gemacht', 'geöffnet') fiilleri
+# 'ge + machen = gemachen' gibi sahte mastarlara dönüştürülür.
 INSEPARABLE_PREFIXES: Tuple[str, ...] = (
-    "be", "ge", "er", "ver", "zer", "ent", "emp", "miss"
+    "be", "er", "ver", "zer", "ent", "emp", "miss"
 )
 
 # Çift Yönlü Önekler (Zweifelsfälle / Trennbar oder untrennbar)
@@ -48,11 +51,23 @@ KNOWN_REGULAR_VERBS: Set[str] = {
     "öffnen", "schließen", "hören", "schauen", "zeigen", "erklären", "erzählen",
     "reisen", "feiern", "kosten", "zahlen", "bezahlen", "tanzen", "kochen",
     "putzen", "bauen", "planen", "studieren", "probieren", "brauchen", "lieben",
-    "passieren", "funktionieren", "interessieren", "informieren", "reparieren"
+    "passieren", "funktionieren", "interessieren", "informieren", "reparieren",
+    "sagen", "melden", "atmen", "folgen", "führen", "setzen", "stellen", "legen",
+    "danken", "wünschen", "besuchen", "versuchen", "benutzen", "bedeuten",
+    "entwickeln", "erinnern", "erwarten", "erreichen", "bestellen",
+    "kontrollieren", "organisieren", "diskutieren", "konzentrieren",
+    # Doğrudan ge- ile başlayan gerçek temel mastarlar:
+    "gehören", "gefallen", "gelingen", "genießen", "geschehen", "gewinnen",
+    "gebrauchen", "gefährden", "genehmigen", "gestalten", "gestatten", "gewöhnen"
 }
 
 # Tüm bilinen temel mastarlar kümesi
-ALL_BASE_VERBS: Set[str] = set(IRREGULAR_VERBS_DATA.keys()) | set(EXTRA_STRONG_VERBS.keys()) | KNOWN_REGULAR_VERBS
+ALL_BASE_VERBS: Set[str] = (
+    set(IRREGULAR_VERBS_DATA.keys()) |
+    set(EXTRA_STRONG_VERBS.keys()) |
+    KNOWN_REGULAR_VERBS |
+    set(VERB_VALENCY_DATA.keys())
+)
 for k, v in COMMON_VOCABULARY.items():
     if "fiil" in v.get("pos", "").lower():
         ALL_BASE_VERBS.add(k)
@@ -261,9 +276,9 @@ def _resolve_separable_context(word: str, sentence: str) -> Optional[LemmaResult
     return None
 
 
-def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str) -> Optional[LemmaResult]:
+def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str, sentence: str = "") -> Optional[LemmaResult]:
     """
-    Katman 3: Partizip II ve zu-Infinitiv kuralları (bağlamsız).
+    Katman 3: Partizip II ve zu-Infinitiv kuralları (bağlamsız veya bağlamlı).
     Örnekler:
     - aufgestanden -> auf + ge + standen -> aufstehen
     - angefangen -> an + ge + fangen -> anfangen
@@ -271,6 +286,8 @@ def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str) -> Optiona
     - anzufangen -> an + zu + fangen -> anfangen
     - aufzustehen -> auf + zu + stehen -> aufstehen
     - aufsteht -> auf + steht -> aufstehen
+    - gestaltet -> gestalten
+    - gehört -> hören veya gehören (bağlama göre)
     """
     # 3.1 zu-Infinitiv (Ayrılabilir fiillerde önek ile mastar arasına -zu- girer: anzufangen, aufzustehen)
     if "zu" in w_lower and (w_lower.endswith("en") or w_lower.endswith("eln") or w_lower.endswith("ern")):
@@ -310,6 +327,8 @@ def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str) -> Optiona
                 # düzenli ge + stem + t
                 if sub_rest.endswith("t"):
                     stem = sub_rest[:-1]
+                    if stem.endswith("e"):
+                        stem = stem[:-1]
                     cand_inf = stem + "en"
                     if _is_known_verb(cand_inf) or _is_known_verb(pfx + cand_inf):
                         return LemmaResult(
@@ -347,7 +366,65 @@ def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str) -> Optiona
                         source="participle_rule"
                     )
 
-    # 3.3 Ayrılmayan önekli fiillerin Partizip II veya Präsens formu (örn: verstehe -> verstehen, befohlen -> befehlen)
+    # 3.3 Standart düzenli Partizip II: ge + stem + t (örn: gemacht -> machen, geöffnet -> öffnen)
+    # NOT: Ayrılmayan önek kontrolünden (3.4) ÖNCE çalışmalıdır, böylece 'ge-' sahte önek sayılmaz.
+    if w_lower.startswith("ge") and len(w_lower) >= 5 and (w_lower.endswith("t") or w_lower.endswith("en")):
+        stem_ge = w_lower[:-1] if w_lower.endswith("t") else w_lower
+        if stem_ge.endswith("e"):
+            stem_ge = stem_ge[:-1]
+        cand_ge = stem_ge + "en"
+
+        sub = w_lower[2:]
+        if sub.endswith("t"):
+            stem = sub[:-1]
+            if stem.endswith("e"):
+                stem = stem[:-1]
+            cand_inf = stem + "en"
+
+            # Eğer hem ge- fiili (örn: gehören) hem de kök fiil (örn: hören) biliniyorsa:
+            if _is_known_verb(cand_ge) and _is_known_verb(cand_inf):
+                if sentence:
+                    tokens = [t.lower().strip(".,!?:;\"'()[]{}„“»«") for t in sentence.split()]
+                    has_aux = any(t in ("habe", "hast", "hat", "haben", "habt", "hatte", "hattest", "hatten", "hattet", "bin", "bist", "ist", "sind", "seid", "war", "warst", "waren", "wart") for t in tokens)
+                    has_gehoeren_clue = any(t in ("mir", "dir", "ihm", "ihr", "uns", "euch", "ihnen", "zu", "wem") for t in tokens)
+                    if has_gehoeren_clue or not has_aux:
+                        return LemmaResult(
+                            surface=surface,
+                            lemma=cand_ge,
+                            form_label="Präsens (er/sie/es)",
+                            separable_prefix="",
+                            confidence="high",
+                            source="regular_rule"
+                        )
+                return LemmaResult(
+                    surface=surface,
+                    lemma=cand_inf,
+                    form_label="Partizip II",
+                    separable_prefix="",
+                    confidence="high",
+                    source="participle_rule"
+                )
+            elif _is_known_verb(cand_ge) and not _is_known_verb(cand_inf):
+                # Doğrudan ge- ile başlayan gerçek temel fiil (gestalten, gefährden, genehmigen, gestatten, gewöhnen)
+                return LemmaResult(
+                    surface=surface,
+                    lemma=cand_ge,
+                    form_label="Präsens (er/sie/es)",
+                    separable_prefix="",
+                    confidence="high",
+                    source="regular_rule"
+                )
+            elif _is_known_verb(cand_inf):
+                return LemmaResult(
+                    surface=surface,
+                    lemma=cand_inf,
+                    form_label="Partizip II",
+                    separable_prefix="",
+                    confidence="high",
+                    source="participle_rule"
+                )
+
+    # 3.4 Ayrılmayan önekli fiillerin Partizip II veya Präsens formu (örn: verstehe -> verstehen, befohlen -> befehlen)
     for pfx in INSEPARABLE_PREFIXES:
         if w_lower.startswith(pfx) and len(w_lower) > len(pfx) + 2:
             rest = w_lower[len(pfx):]
@@ -377,24 +454,6 @@ def _resolve_participle_and_zu_infinitive(w_lower: str, surface: str) -> Optiona
                         source="participle_rule"
                     )
 
-    # 3.4 Standart düzenli Partizip II: ge + stem + t (örn: gemacht -> machen)
-    if w_lower.startswith("ge") and len(w_lower) >= 5:
-        sub = w_lower[2:]
-        if sub.endswith("t"):
-            stem = sub[:-1]
-            if stem.endswith("e"):
-                stem = stem[:-1]
-            cand_inf = stem + "en"
-            if _is_known_verb(cand_inf):
-                return LemmaResult(
-                    surface=surface,
-                    lemma=cand_inf,
-                    form_label="Partizip II",
-                    separable_prefix="",
-                    confidence="high",
-                    source="participle_rule"
-                )
-
     return None
 
 
@@ -406,34 +465,57 @@ def _resolve_regular_verb(w_lower: str) -> Optional[Tuple[str, str]]:
     if len(w_lower) < 4:
         return None
 
-    # Präteritum ekleri (-test, -ten, -tet, -te)
-    for end, lbl in [
+    # 1. Aşama: Bilinen fiiller için tam kök eşleşmesi (Präteritum ve Präsens)
+    # Bu aşama, doğrudan ge- ile başlayan temel fiilleri (gestalten, gefährden, genehmigen, gestatten, gewöhnen, gehören)
+    # ve normal düzenli fiilleri (macht -> machen, arbeitet -> arbeiten) eksiksiz yakalar.
+    all_endings = [
         ("test", "Präteritum (du)"),
         ("ten", "Präteritum (wir/sie)"),
         ("tet", "Präteritum (ihr)"),
         ("te", "Präteritum"),
-    ]:
+        ("est", "Präsens (du)"),
+        ("st", "Präsens (du)"),
+        ("et", "Präsens (er/sie/es)"),
+        ("t", "Präsens (er/sie/es)"),
+        ("e", "Präsens (ich)"),
+    ]
+
+    for end, lbl in all_endings:
         if w_lower.endswith(end):
             stem = w_lower[:-len(end)]
             if stem.endswith("e"):
                 stem = stem[:-1]
             if len(stem) >= 2:
                 cand = stem + "en"
-                return cand, lbl
+                if _is_known_verb(cand):
+                    return cand, lbl
 
-    # Präsens ekleri (-est, -st, -et, -t, -e)
-    for end, lbl in [
-        ("est", "Präsens (du)"),
-        ("st", "Präsens (du)"),
-        ("et", "Präsens (er/sie/es)"),
-        ("t", "Präsens (er/sie/es)"),
-        ("e", "Präsens (ich)"),
-    ]:
+    # 2. Aşama: ge-...-t ile düzenli Partizip II adayı (örn: gemacht -> machen, gelernt -> lernen)
+    if w_lower.startswith("ge") and len(w_lower) >= 5 and (w_lower.endswith("t") or w_lower.endswith("et")):
+        sub = w_lower[2:]
+        if sub.endswith("et"):
+            stem = sub[:-2]
+        elif sub.endswith("t"):
+            stem = sub[:-1]
+            if stem.endswith("e"):
+                stem = stem[:-1]
+        else:
+            stem = ""
+        if len(stem) >= 2:
+            cand = stem + "en"
+            return cand, "Partizip II"
+
+    # 3. Aşama: Bilinmeyen düzenli fiiller için düşük güvenilirlikli çekim çözücü.
+    # ÖNEMLİ KURAL: ge- ile başlayan kelimeleri körü körüne 'ge...en' Präsens formuna dönüştürmeyi engelle!
+    for end, lbl in all_endings:
         if w_lower.endswith(end):
             stem = w_lower[:-len(end)]
+            if stem.endswith("e"):
+                stem = stem[:-1]
             if len(stem) >= 2:
                 cand = stem + "en"
-                return cand, lbl
+                if not (w_lower.startswith("ge") and end in ("t", "et")):
+                    return cand, lbl
 
     return None
 
@@ -502,8 +584,8 @@ def resolve_lemma(word: str, sentence: str = "") -> LemmaResult:
             source="irregular_table"
         )
 
-    # Katman 3: Partizip II ve zu-Infinitiv kuralları (bağlamsız)
-    part_res = _resolve_participle_and_zu_infinitive(w_lower, w_clean)
+    # Katman 3: Partizip II ve zu-Infinitiv kuralları (bağlam destekli)
+    part_res = _resolve_participle_and_zu_infinitive(w_lower, w_clean, sentence=sentence)
     if part_res:
         return part_res
 

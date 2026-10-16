@@ -239,6 +239,24 @@ class HoverTooltip:
         # Fare kartın üzerine geldiğinde otomatik kapanmayı durdur
         self.window.bind("<Enter>", lambda e: self._cancel_auto_hide())
         self.outer_frame.bind("<Enter>", lambda e: self._cancel_auto_hide())
+        self.window.bind("<Leave>", self._on_mouse_leave)
+        self.outer_frame.bind("<Leave>", self._on_mouse_leave)
+
+    def _on_mouse_leave(self, event):
+        if not self.window or not self.window.winfo_exists():
+            return
+        x = self.window.winfo_pointerx()
+        y = self.window.winfo_pointery()
+        widget_under_pointer = self.window.winfo_containing(x, y)
+        if widget_under_pointer:
+            top = getattr(widget_under_pointer, "winfo_toplevel", lambda: None)()
+            if top == self.window:
+                return  # İmleç halen tooltip penceresi içindeki bir bileşenin üzerinde
+
+        # İmleç gerçekten pencereden ayrıldı; zamanlayıcıyı yeniden başlat
+        if self.auto_hide_seconds > 0 and self.root.winfo_exists():
+            self._cancel_auto_hide()
+            self._auto_hide_id = self.root.after(int(self.auto_hide_seconds * 1000), self.hide)
 
     def show_loading(self, cursor_x: int, cursor_y: int, message: str = "🔍 Okunuyor..."):
         """Tetikleme anında hemen beliren hafif yükleniyor göstergesi."""

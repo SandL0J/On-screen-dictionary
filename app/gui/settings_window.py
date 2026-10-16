@@ -21,12 +21,16 @@ class SettingsWindow:
         config: dict,
         on_settings_changed: Callable[[dict], None],
         ocr_engine=None,
-        on_open_wizard: Optional[Callable[[], None]] = None
+        on_open_wizard: Optional[Callable[[], None]] = None,
+        translator=None,
+        db=None
     ):
         self.config = config
         self.on_settings_changed = on_settings_changed
         self.ocr_engine = ocr_engine
         self.on_open_wizard = on_open_wizard
+        self.translator = translator
+        self.db = db
         self._restore_timer_id = None
         self._is_closed = False
         self._ui_queue = queue.Queue()
@@ -1307,7 +1311,11 @@ class SettingsWindow:
             from app.gui.onboarding_wizard import OnboardingWizard
             from app.ocr_engine import OCREngine
             from app.translator import TranslationEngine
+            master = getattr(self.window, "master", None)
             eng = self.ocr_engine or OCREngine()
-            trans = TranslationEngine(gemini_api_key=self.config.get("gemini_api_key", ""))
-            OnboardingWizard(self.window.master, self.config, eng, trans)
+            trans = getattr(self, "translator", None)
+            db = getattr(self, "db", None)
             self.window.destroy()
+            if not trans:
+                trans = TranslationEngine(gemini_api_key=self.config.get("gemini_api_key", ""), db=db)
+            OnboardingWizard(master, self.config, eng, trans, db=db)

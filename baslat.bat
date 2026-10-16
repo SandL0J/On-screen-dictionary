@@ -63,11 +63,11 @@ if exist "%~dp0.venv\Scripts\python.exe" (
 :python_ready
 :: 2. Gerekli Bağımlılıkları Kontrol Et
 echo [2/3] Kütüphaneler kontrol ediliyor...
-"!PY_CMD!" -c "import PIL, requests, pystray" >nul 2>&1
+"!PY_CMD!" -c "import PIL, pystray" >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
     echo.
     echo [*] Eksik kütüphaneler tespit edildi. Otomatik olarak kuruluyor...
-    echo     (Pillow, requests, pystray)
+    echo     (Pillow, pystray)
     echo.
     "!PY_CMD!" -m pip install -r "%~dp0requirements.txt"
     if !ERRORLEVEL! NEQ 0 (

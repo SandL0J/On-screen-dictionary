@@ -174,7 +174,6 @@ COMMON_VOCABULARY: Dict[str, Dict[str, str]] = {
     "arbeit": {"article": "die", "plural": "die Arbeiten", "turkish": "iş, çalışma", "pos": "İsim (Nomen)", "ex_de": "Er sucht eine neue Arbeit.", "ex_tr": "O yeni bir iş arıyor."},
     "frage": {"article": "die", "plural": "die Fragen", "turkish": "soru", "pos": "İsim (Nomen)", "ex_de": "Darf ich Ihnen eine Frage stellen?", "ex_tr": "Size bir soru sorabilir miyim?"},
     "antwort": {"article": "die", "plural": "die Antworten", "turkish": "cevap, yanıt", "pos": "İsim (Nomen)", "ex_de": "Ich warte auf deine Antwort.", "ex_tr": "Senin yanıtını bekliyorum."},
-    "leben": {"article": "das", "plural": "-", "turkish": "hayat, yaşam", "pos": "İsim (Nomen)", "ex_de": "Das Leben ist schön.", "ex_tr": "Hayat güzeldir."},
     "weg": {"article": "der", "plural": "die Wege", "turkish": "yol, yöntem", "pos": "İsim (Nomen)", "ex_de": "Können Sie mir den Weg zeigen?", "ex_tr": "Bana yolu gösterebilir misiniz?"},
     "stadt": {"article": "die", "plural": "die Städte", "turkish": "şehir, kent", "pos": "İsim (Nomen)", "ex_de": "Berlin ist eine große Stadt.", "ex_tr": "Berlin büyük bir şehirdir."},
     "land": {"article": "das", "plural": "die Länder", "turkish": "ülke, memleket; kır", "pos": "İsim (Nomen)", "ex_de": "Deutschland ist ein schönes Land.", "ex_tr": "Almanya güzel bir ülkedir."},
@@ -229,6 +228,11 @@ COMMON_VOCABULARY: Dict[str, Dict[str, str]] = {
     "wissen": {"article": "", "plural": "", "turkish": "bilmek", "pos": "Fiil (Verb)", "ex_de": "Ich weiß es nicht.", "ex_tr": "Bunu bilmiyorum."},
     "fragen": {"article": "", "plural": "", "turkish": "sormak", "pos": "Fiil (Verb)", "ex_de": "Darf ich etwas fragen?", "ex_tr": "Bir şey sorabilir miyim?"},
     "antworten": {"article": "", "plural": "", "turkish": "cevap vermek", "pos": "Fiil (Verb)", "ex_de": "Bitte antworte mir schnell.", "ex_tr": "Lütfen bana çabuk cevap ver."},
+    "leben": {"article": "", "plural": "", "turkish": "yaşamak", "pos": "Fiil (Verb)", "ex_de": "Ich lebe in Berlin.", "ex_tr": "Berlin'de yaşıyorum."},
+    "essen": {"article": "", "plural": "", "turkish": "yemek yemek", "pos": "Fiil (Verb)", "ex_de": "Wir essen zu Mittag.", "ex_tr": "Öğle yemeği yiyoruz."},
+    "treffen": {"article": "", "plural": "", "turkish": "buluşmak, karşılaşmak", "pos": "Fiil (Verb)", "ex_de": "Ich treffe heute Freunde.", "ex_tr": "Bugün arkadaşlarımla buluşuyorum."},
+    "schreiben": {"article": "", "plural": "", "turkish": "yazmak", "pos": "Fiil (Verb)", "ex_de": "Er schreibt einen Brief.", "ex_tr": "O bir mektup yazıyor."},
+    "lesen": {"article": "", "plural": "", "turkish": "okumak", "pos": "Fiil (Verb)", "ex_de": "Ich lese ein Buch.", "ex_tr": "Bir kitap okuyorum."},
     # Sıfatlar (Adjektive)
     "wichtig": {"article": "", "plural": "", "turkish": "önemli", "pos": "Sıfat (Adjektiv)", "ex_de": "Diese Regel ist sehr wichtig.", "ex_tr": "Bu kural çok önemlidir."},
     "schwierig": {"article": "", "plural": "", "turkish": "zor, güç", "pos": "Sıfat (Adjektiv)", "ex_de": "Die Grammatik ist nicht so schwierig.", "ex_tr": "Gramer o kadar zor değil."},
@@ -240,6 +244,16 @@ COMMON_VOCABULARY: Dict[str, Dict[str, str]] = {
     "neu": {"article": "", "plural": "", "turkish": "yeni", "pos": "Sıfat (Adjektiv)", "ex_de": "Ich habe ein neues Buch.", "ex_tr": "Yeni bir kitabım var."},
     "alt": {"article": "", "plural": "", "turkish": "eski, yaşlı", "pos": "Sıfat (Adjektiv)", "ex_de": "Wie alt bist du?", "ex_tr": "Kaç yaşındasın?"},
     "schnell": {"article": "", "plural": "", "turkish": "hızlı, çabuk", "pos": "Sıfat (Adjektiv)", "ex_de": "Er lernt sehr schnell.", "ex_tr": "O çok hızlı öğreniyor."},
+}
+
+# Baş harfi büyük veya artikel ile kullanıldığında isim olan fiil kökenli isimler (Verbal Nouns / Substantivierte Verben)
+VERBAL_NOUNS: Dict[str, Dict[str, str]] = {
+    "essen": {"article": "das", "plural": "-", "turkish": "yemek, yiyecek", "pos": "İsim (Nomen)", "ex_de": "Das Essen schmeckt hervorragend.", "ex_tr": "Yemek harika lezzetli."},
+    "leben": {"article": "das", "plural": "-", "turkish": "hayat, yaşam", "pos": "İsim (Nomen)", "ex_de": "Das Leben ist schön.", "ex_tr": "Hayat güzeldir."},
+    "treffen": {"article": "das", "plural": "die Treffen", "turkish": "buluşma, toplantı", "pos": "İsim (Nomen)", "ex_de": "Das Treffen beginnt um 10 Uhr.", "ex_tr": "Toplantı saat 10'da başlıyor."},
+    "schreiben": {"article": "das", "plural": "die Schreiben", "turkish": "yazı, mektup, resmi yazı", "pos": "İsim (Nomen)", "ex_de": "Ich habe ein offizielles Schreiben erhalten.", "ex_tr": "Resmi bir yazı aldım."},
+    "lesen": {"article": "das", "plural": "-", "turkish": "okuma", "pos": "İsim (Nomen)", "ex_de": "Das Lesen macht viel Spaß.", "ex_tr": "Okumak çok eğlencelidir."},
+    "wissen": {"article": "das", "plural": "-", "turkish": "bilgi", "pos": "İsim (Nomen)", "ex_de": "Wissen ist Macht.", "ex_tr": "Bilgi güçtür."},
 }
 
 # Çoğul Form Eşleme İndeksi (Plural -> Singular Mapping)
@@ -478,6 +492,26 @@ def get_offline_analysis(text: str) -> Optional[Dict[str, Any]]:
     if not base:
         return None
     base_lower = base.lower()
+
+    # 0. Büyük harfli veya artikelli fiil kökenli isimler (Verbal Nouns / Substantivierte Verben)
+    # Kullanıcı "Essen", "das Essen", "Leben", "das Leben" vb. girdiğinde fiil yerine ismi getirir.
+    is_capitalized_candidate = bool(art or (base and base[0].isupper()))
+    if is_capitalized_candidate and base_lower in VERBAL_NOUNS:
+        item = VERBAL_NOUNS[base_lower].copy()
+        article = art or item.get("article", "das")
+        return {
+            "source": "offline_db",
+            "german": f"{article} {base.capitalize()}".strip() if article else base.capitalize(),
+            "article": article,
+            "article_color": ARTICLE_COLORS.get(article, "#6b7280"),
+            "plural": item.get("plural", ""),
+            "turkish": item.get("turkish", ""),
+            "pos": item.get("pos", "İsim (Nomen)"),
+            "example_de": item.get("ex_de", ""),
+            "example_tr": item.get("ex_tr", ""),
+            "grammar_note": f"Artikeli '{article}' olan fiilden türetilmiş bir isimdir (Substantiviertes Verb)." if article else "",
+            "is_sentence": False
+        }
 
     # 1. Doğrudan tekil kelime eşleşmesi
     if base_lower in COMMON_VOCABULARY:

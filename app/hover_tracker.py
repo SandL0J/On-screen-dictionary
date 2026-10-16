@@ -13,7 +13,7 @@ from ctypes import wintypes
 import threading
 import time
 import math
-from typing import Callable, Optional, Dict, Any, Tuple
+from typing import Callable, Optional, Dict, Any, Tuple, List
 from PIL import Image
 
 from app.security import is_sensitive_clipboard_text
@@ -183,6 +183,105 @@ def capture_screen_rect_gdi(x: int, y: int, w: int, h: int) -> Optional[Image.Im
                 user32.ReleaseDC(hwin, hwindc)
             except Exception:
                 pass
+
+
+def _find_word_at_point(
+    boxes: List[Dict[str, Any]],
+    rel_x: float,
+    rel_y: float,
+    pad_x: int = 18,
+    pad_y: int = 12
+) -> Optional[Dict[str, Any]]:
+    """
+    Mikro ekran görüntüsündeki göreli koordinata (rel_x, rel_y) en uygun kelime kutusunu seçer.
+    1. Önce kesin kutu içi eşleşmeye bakar (pad_x=0, pad_y=0).
+    2. Bulunamazsa dolgulu tolerans kutusuna bakar (pad_x, pad_y).
+    3. Yine bulunamazsa en yakın merkeze bakar (maksimum 75px mesafe).
+    """
+    if not boxes:
+        return None
+
+    # 1. Kesin kutu içi eşleşme
+    exact_candidates = []
+    for b in boxes:
+        bx = b.get("x", 0)
+        by = b.get("y", 0)
+        bw = b.get("w", 0)
+        bh = b.get("h", 0)
+        if bx <= rel_x <= bx + bw and by <= rel_y <= by + bh:
+            cx = bx + bw / 2.0
+            cy = by + bh / 2.0
+            dist = math.hypot(cx - rel_x, cy - rel_y)
+            exact_candidates.append((dist, b))
+
+    if exact_candidates:
+        exact_candidates.sort(key=lambda item: item[0])
+        return exact_candidates[0][1]
+
+    # 2. Dolgulu (padded) tolerans eşleşmesi
+    padded_candidates = []
+    for b in boxes:
+        bx = b.get("x", 0)
+        by = b.get("y", 0)
+        bw = b.get("w", 0)
+        bh = b.get("h", 0)
+        if (bx - pad_x <= rel_x <= bx + bw + pad_x) and (by - pad_y <= rel_y <= by + bh + pad_y):
+            cx = bx + bw / 2.0
+            cy = by + bh / 2.0
+            dist = math.hypot(cx - rel_x, cy - rel_y)
+            padded_candidates.append((dist, b))
+
+    if padded_candidates:
+        padded_candidates.sort(key=lambda item: item[0])
+        return padded_candidates[0][1]
+
+    # 3. En yakın kutu (maksimum 75.0px mesafe)
+    closest_dist = 999999.0
+    best_box = None
+    for b in boxes:
+        cx = b.get("x", 0) + b.get("w", 0) / 2.0
+        cy = b.get("y", 0) + b.get("h", 0) / 2.0
+        dist = math.hypot(cx - rel_x, cy - rel_y)
+        if dist < closest_dist:
+            closest_dist = dist
+            best_box = b
+
+    if best_box and closest_dist <= 75.0:
+        return best_box
+
+    return None
+
+
+def _extract_context_sentence(boxes: List[Dict[str, Any]], target_box: Optional[Dict[str, Any]]) -> str:
+    """
+    Hedef kelime kutusunun bulunduğu satırdaki/cümledeki kelimeleri birleştirerek bağlam cümlesi üretir.
+    Eğer OCR zaten bir 'sentence' alanı üretmişse ve birden fazla kelime içeriyorsa onu önceliklendirir.
+    Tek harfli Almanca veya ödünç kelimeler (örn: 'à', 'a', 'o') korunur.
+    """
+    if not target_box:
+        return ""
+    existing_sentence = (target_box.get("sentence") or "").strip()
+    if existing_sentence and len(existing_sentence.split()) > 1:
+        return existing_sentence
+
+    if not boxes:
+        return target_box.get("text", "").strip()
+
+    target_y = target_box.get("y", 0)
+    target_h = max(target_box.get("h", 16), 10)
+    line_boxes = []
+    for b in boxes:
+        by = b.get("y", 0)
+        bh = max(b.get("h", 16), 10)
+        if abs(by - target_y) <= max(target_h, bh) * 0.75:
+            line_boxes.append(b)
+
+    if not line_boxes:
+        return target_box.get("text", "").strip()
+
+    line_boxes.sort(key=lambda b: b.get("x", 0))
+    tokens = [b.get("text", "").strip() for b in line_boxes if b.get("text", "").strip()]
+    return " ".join(tokens)
 
 
 class HoverTracker:
@@ -556,47 +655,9 @@ class HoverTracker:
             rel_cursor_x = cursor_x - left
             rel_cursor_y = cursor_y - top
 
-            # 3. Akıllı Kelime Eşleştirme (Doğrudan Kutu + En Yakın Komşu)
-            target_word = None
-            target_box = None
-            margin_x = 24
-            margin_y = 16
-
-            # 3a. İmleç doğrudan kelime kutusunun içindeyse (en yakın olanı seç)
-            candidate_boxes = []
-            for b in boxes:
-                bx = b["x"]
-                by = b["y"]
-                bw = b["w"]
-                bh = b["h"]
-
-                if (bx - margin_x <= rel_cursor_x <= bx + bw + margin_x) and \
-                   (by - margin_y <= rel_cursor_y <= by + bh + margin_y):
-                    center_x = bx + bw / 2.0
-                    center_y = by + bh / 2.0
-                    dist = math.hypot(center_x - rel_cursor_x, center_y - rel_cursor_y)
-                    candidate_boxes.append((dist, b))
-
-            if candidate_boxes:
-                candidate_boxes.sort(key=lambda item: item[0])
-                target_box = candidate_boxes[0][1]
-                target_word = target_box["text"].strip()
-
-            # 3b. İmleç birkaç piksel dışındaysa en yakın kelimeyi seç (yakınlık toleransı)
-            if not target_word and boxes:
-                closest_dist = 999999.0
-                best_box = None
-                for b in boxes:
-                    center_x = b["x"] + b["w"] / 2.0
-                    center_y = b["y"] + b["h"] / 2.0
-                    dist = math.hypot(center_x - rel_cursor_x, center_y - rel_cursor_y)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        best_box = b
-
-                if best_box and closest_dist <= 75.0:
-                    target_word = best_box["text"].strip()
-                    target_box = best_box
+            # 3. Akıllı Kelime Eşleştirme (Doğrudan Kutu + Dolgu + En Yakın Komşu)
+            target_box = _find_word_at_point(boxes, rel_cursor_x, rel_cursor_y, pad_x=18, pad_y=12)
+            target_word = target_box.get("text", "").strip() if target_box else None
 
             # 4. Kelimeyi Temizle ve Çevir
             if target_word:
@@ -624,7 +685,7 @@ class HoverTracker:
                     self._active_word_screen_rect = None
 
                 try:
-                    sentence = (target_box.get("sentence") or "").strip()
+                    sentence = _extract_context_sentence(boxes, target_box)
                     lemma_enabled = bool(getattr(self, "config", {}).get("lemma_lookup_enabled", True))
                     lemma_res = resolve_lemma(cleaned_word, sentence) if lemma_enabled else None
                     lookup_word = lemma_res.lemma if lemma_res and lemma_res.confidence in ("high", "medium") and lemma_res.lemma.lower() != cleaned_word.lower() else cleaned_word
@@ -683,3 +744,5 @@ class HoverTracker:
 
     # Geriye dönük uyumluluk ve doğrudan çağrılar için alias
     _process_hover_detection = _inspect_hover_area
+    _find_word_at_point = staticmethod(_find_word_at_point)
+    _extract_context_sentence = staticmethod(_extract_context_sentence)
